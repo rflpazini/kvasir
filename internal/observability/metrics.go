@@ -19,18 +19,24 @@ type Metrics struct {
 // NewMetrics constructs and registers every collector in the kvasir namespace.
 func NewMetrics(reg prometheus.Registerer) *Metrics {
 	m := &Metrics{
+		// Top finite bucket = 30s to match the per-adapter timeout, so
+		// cold FlareSolverr solves (which take 10-25s) fall into a real
+		// bucket instead of +Inf. Without it P95/P99 quantize to
+		// "between 16s and timeout" and lose diagnostic value.
 		ScrapeDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Namespace: "kvasir",
 			Name:      "scrape_duration_seconds",
 			Help:      "Time spent scraping a single adapter for a query.",
-			Buckets:   []float64{0.1, 0.25, 0.5, 1, 2, 4, 8, 16},
+			Buckets:   []float64{0.1, 0.25, 0.5, 1, 2, 4, 8, 16, 30},
 		}, []string{"adapter", "status"}),
 
+		// "status" label name kept consistent with ScrapeDuration so a
+		// PromQL join (errors / total) does not require relabeling.
 		ScrapeErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: "kvasir",
 			Name:      "scrape_errors_total",
-			Help:      "Total scrape errors broken down by adapter and category.",
-		}, []string{"adapter", "error_type"}),
+			Help:      "Total scrape errors broken down by adapter and status.",
+		}, []string{"adapter", "status"}),
 
 		ResultsReturned: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Namespace: "kvasir",
