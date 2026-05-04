@@ -1,6 +1,22 @@
+# Production stack for the lxc-docker host on Proxmox.
+#
+# Conventions:
+#   - bind mounts under /appdata/kvasir/, no `version:` field, no named volumes
+#   - Traefik routes via docker-provider labels on this service. The kvasir
+#     container is dual-homed: `edge` so Traefik can reach it, and a private
+#     `kvasir-net` so Redis and FlareSolverr stay off the public network.
+#   - kvasir.rflpazini.sh resolves through Traefik with lan-only +
+#     secured-defaults middlewares (LAN-only access, single-user homelab).
+#
+# Bring up:
+#   docker compose -f /appdata/kvasir/deploy/docker-compose.yml up -d --build
+
 services:
   kvasir:
-    image: ghcr.io/rflpazini/kvasir:latest
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: kvasir:latest
     container_name: kvasir
     restart: unless-stopped
     environment:
@@ -10,11 +26,10 @@ services:
       LOG_LEVEL: info
       ENABLE_DEBUG_ENDPOINTS: "false"
     volumes:
-      - /appdata/kvasir/config:/config:ro
       - /appdata/kvasir/logs:/logs
     networks:
+      - edge
       - kvasir-net
-      - public-net
     depends_on:
       redis:
         condition: service_healthy
@@ -28,12 +43,17 @@ services:
       start_period: 10s
     labels:
       traefik.enable: "true"
-      traefik.http.routers.kvasir.rule: "Host(`kvasir.lan.rflpazini.sh`)"
+      traefik.docker.network: "edge"
+      traefik.http.routers.kvasir.rule: "Host(`kvasir.rflpazini.sh`)"
       traefik.http.routers.kvasir.entrypoints: "websecure"
       traefik.http.routers.kvasir.tls: "true"
+      traefik.http.routers.kvasir.tls.certresolver: "cloudflare"
+      traefik.http.routers.kvasir.tls.domains[0].main: "rflpazini.sh"
+      traefik.http.routers.kvasir.tls.domains[0].sans: "*.rflpazini.sh"
       traefik.http.routers.kvasir.middlewares: "lan-only@file,secured-defaults@file"
       traefik.http.services.kvasir.loadbalancer.server.port: "8080"
-      traefik.docker.network: "public-net"
+      traefik.http.services.kvasir.loadbalancer.healthcheck.path: "/healthz"
+      traefik.http.services.kvasir.loadbalancer.healthcheck.interval: "30s"
 
   redis:
     image: redis:7-alpine
@@ -67,14 +87,10 @@ services:
       LOG_LEVEL: info
       TZ: America/Sao_Paulo
     networks:
-      # FlareSolverr precisa egress real para resolver Cloudflare,
-      # então fica em public-net além de kvasir-net (interno).
       - kvasir-net
-      - public-net
 
 networks:
+  edge:
+    external: true
   kvasir-net:
     driver: bridge
-    internal: true
-  public-net:
-    external: true
