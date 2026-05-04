@@ -2,15 +2,22 @@
 // Loaded as <script type="module">. Pure logic + UI plumbing lives in
 // api.js (URL building / fetch) and render.js (DOM helpers / templates);
 // this module owns the mutable session state and dispatches between them.
-
-import { fetchJSON, fetchMagnet, loadAdapters, recentURL, searchURL } from "/api.js";
+//
+// The ?v=src1 querystring on each import is load-bearing despite the
+// `Cache-Control: no-cache` middleware. Cloudflare overrides origin
+// cache headers with a zone-level rule (max-age=14400 surfaces in the
+// CF response), so without versioned URLs CF holds an old api.js or
+// render.js for hours after a deploy. Bump v on every change to
+// either module — single source of truth: search-and-replace `v=src1`
+// in index.html (stylesheet + script tag) AND here.
+import { fetchJSON, fetchMagnet, loadAdapters, recentURL, searchURL } from "/api.js?v=src1";
 import {
     renderError,
     renderResults,
     renderSourceChips,
     renderStats,
     showSkeleton,
-} from "/render.js";
+} from "/render.js?v=src1";
 
 // ---- DOM refs --------------------------------------------------------------
 
