@@ -1,0 +1,180 @@
+package aggregator_test
+
+import (
+	"context"
+	"errors"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/rflpazini/kvasir/internal/adapter"
+	"github.com/rflpazini/kvasir/internal/aggregator"
+	"github.com/rflpazini/kvasir/internal/model"
+)
+
+// fakeAdapter is a controllable adapter.Adapter for unit tests.
+type fakeAdapter struct {
+	name    string
+	delay   time.Duration
+	results []model.Result
+	err     error
+	calls   atomic.Int32
+}
+
+func (f *fakeAdapter) Name() string { return f.name }
+
+func (f *fakeAdapter) Search(ctx context.Context, _ string) ([]model.Result, error) {
+	f.calls.Add(1)
+	if f.delay > 0 {
+		select {
+		case <-time.After(f.delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.results, nil
+}
+
+func (f *fakeAdapter) HealthCheck(_ context.Context) error { return nil }
+
+func registry(t *testing.T, adapters ...adapter.Adapter) *adapter.Registry {
+	t.Helper()
+	r := adapter.NewRegistry()
+	for _, a := range adapters {
+		r.Register(a)
+	}
+	return r
+}
+
+func TestAggregator_RunsAdaptersInParallel(t *testing.T) {
+	a := &fakeAdapter{name: "a", delay: 100 * time.Millisecond, results: []model.Result{{Title: "A1", Source: "a"}}}
+	b := &fakeAdapter{name: "b", delay: 100 * time.Millisecond, results: []model.Result{{Title: "B1", Source: "b"}}}
+	c := &fakeAdapter{name: "c", delay: 100 * time.Millisecond, results: []model.Result{{Title: "C1", Source: "c"}}}
+
+	agg := aggregator.New(registry(t, a, b, c), 1*time.Second)
+
+	start := time.Now()
+	resp := agg.Search(context.Background(), "x")
+	elapsed := time.Since(start)
+
+	// 3 adapters * 100ms each. If sequential: 300ms+. If parallel: ~100ms.
+	if elapsed > 200*time.Millisecond {
+		t.Fatalf("adapters did not run in parallel: total=%v", elapsed)
+	}
+	if got := len(resp.Results); got != 3 {
+		t.Errorf("expected 3 results, got %d", got)
+	}
+	for _, name := range []string{"a", "b", "c"} {
+		if resp.SourceStats[name].Status != model.StatusOK {
+			t.Errorf("source %s status = %q, want ok", name, resp.SourceStats[name].Status)
+		}
+	}
+}
+
+func TestAggregator_OneFailureDoesNotDerailOthers(t *testing.T) {
+	good := &fakeAdapter{name: "good", results: []model.Result{{Title: "ok", Source: "good"}}}
+	bad := &fakeAdapter{name: "bad", err: errors.New("scrape boom")}
+	other := &fakeAdapter{name: "other", results: []model.Result{{Title: "ok2", Source: "other"}}}
+
+	agg := aggregator.New(registry(t, good, bad, other), 1*time.Second)
+
+	resp := agg.Search(context.Background(), "x")
+
+	if len(resp.Results) != 2 {
+		t.Errorf("expected 2 results from healthy adapters, got %d", len(resp.Results))
+	}
+	if resp.SourceStats["bad"].Status != model.StatusError {
+		t.Errorf("bad source status = %q, want %q", resp.SourceStats["bad"].Status, model.StatusError)
+	}
+	if resp.SourceStats["bad"].ErrorMsg == "" {
+		t.Error("bad source must carry an error message")
+	}
+	if resp.SourceStats["good"].Status != model.StatusOK {
+		t.Errorf("good source status = %q", resp.SourceStats["good"].Status)
+	}
+}
+
+func TestAggregator_TimeoutClassifiedAsTimeoutNotError(t *testing.T) {
+	slow := &fakeAdapter{name: "slow", delay: 200 * time.Millisecond, results: []model.Result{{Title: "x", Source: "slow"}}}
+	fast := &fakeAdapter{name: "fast", results: []model.Result{{Title: "y", Source: "fast"}}}
+
+	// per-adapter timeout 50ms, slow will trip it
+	agg := aggregator.New(registry(t, slow, fast), 50*time.Millisecond)
+
+	resp := agg.Search(context.Background(), "x")
+
+	if resp.SourceStats["slow"].Status != model.StatusTimeout {
+		t.Errorf("slow source status = %q, want %q", resp.SourceStats["slow"].Status, model.StatusTimeout)
+	}
+	if resp.SourceStats["fast"].Status != model.StatusOK {
+		t.Errorf("fast source status = %q", resp.SourceStats["fast"].Status)
+	}
+	if len(resp.Results) != 1 {
+		t.Errorf("expected 1 result from fast adapter, got %d", len(resp.Results))
+	}
+}
+
+func TestAggregator_DefaultTimeoutWhenZeroProvided(t *testing.T) {
+	a := &fakeAdapter{name: "a", results: []model.Result{}}
+	agg := aggregator.New(registry(t, a), 0) // 0 should fall back to internal default
+
+	// Just verify it runs without blocking forever; actual default value is implementation detail.
+	done := make(chan struct{})
+	go func() {
+		agg.Search(context.Background(), "x")
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("aggregator hung; default timeout did not apply")
+	}
+}
+
+func TestAggregator_EmptyRegistryReturnsEmptyResponse(t *testing.T) {
+	agg := aggregator.New(adapter.NewRegistry(), 1*time.Second)
+	resp := agg.Search(context.Background(), "anything")
+
+	if len(resp.Results) != 0 {
+		t.Errorf("expected 0 results, got %d", len(resp.Results))
+	}
+	if len(resp.SourceStats) != 0 {
+		t.Errorf("expected 0 source stats, got %d", len(resp.SourceStats))
+	}
+	if resp.Query != "anything" {
+		t.Errorf("query roundtrip = %q, want anything", resp.Query)
+	}
+}
+
+func TestAggregator_DurationReported(t *testing.T) {
+	a := &fakeAdapter{name: "a", delay: 50 * time.Millisecond, results: []model.Result{}}
+	agg := aggregator.New(registry(t, a), 1*time.Second)
+
+	resp := agg.Search(context.Background(), "x")
+
+	if resp.DurationMs < 40 || resp.DurationMs > 500 {
+		t.Errorf("DurationMs = %d, expected ~50ms", resp.DurationMs)
+	}
+}
+
+func TestAggregator_ParentContextCancelPropagates(t *testing.T) {
+	slow := &fakeAdapter{name: "slow", delay: 500 * time.Millisecond, results: []model.Result{}}
+	agg := aggregator.New(registry(t, slow), 1*time.Second)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	start := time.Now()
+	resp := agg.Search(ctx, "x")
+	elapsed := time.Since(start)
+
+	if elapsed > 100*time.Millisecond {
+		t.Errorf("parent cancel did not propagate; took %v", elapsed)
+	}
+	if resp.SourceStats["slow"].Status != model.StatusTimeout {
+		t.Errorf("expected timeout status on cancelled context, got %q", resp.SourceStats["slow"].Status)
+	}
+}
