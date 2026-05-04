@@ -15,6 +15,7 @@ import (
 	"github.com/rflpazini/kvasir/internal/aggregator"
 	"github.com/rflpazini/kvasir/internal/cache"
 	"github.com/rflpazini/kvasir/internal/flaresolverr"
+	"github.com/rflpazini/kvasir/internal/health"
 	apphttp "github.com/rflpazini/kvasir/internal/http"
 	"github.com/rflpazini/kvasir/internal/observability"
 )
@@ -73,7 +74,8 @@ func run() error {
 	// Cloudflare-fronted sites (eg comando.la) routinely take 15–25s on the
 	// first request after a session expiry. Direct-HTTP adapters return well
 	// within 2s, so the higher ceiling does not affect the warm path.
-	agg := aggregator.New(registry, 30*time.Second, metrics)
+	tracker := health.NewTracker()
+	agg := aggregator.New(registry, 30*time.Second, metrics, tracker)
 
 	srv := apphttp.NewServer(apphttp.Config{
 		StaticDir:            getenv("STATIC_DIR", "web/static"),
@@ -85,6 +87,7 @@ func run() error {
 		Aggregator: agg,
 		Cache:      cacheClient,
 		PromGather: reg,
+		Health:     tracker,
 	})
 
 	addr := getenv("LISTEN_ADDR", ":8080")

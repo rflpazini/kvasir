@@ -79,7 +79,7 @@ func TestAggregator_FanOutResultsAreDeterministic(t *testing.T) {
 		{Title: "C1", Source: "c", DetailURL: "https://c/1"},
 	}}
 
-	agg := aggregator.New(registry(t, bSlow, aFast, cMid), 1*time.Second, nil)
+	agg := aggregator.New(registry(t, bSlow, aFast, cMid), 1*time.Second, nil, nil)
 
 	// Within `b` the adapter returned [B2, B1] (non-alphabetical), but
 	// the response sorts by DetailURL → B1 first, B2 second.
@@ -123,7 +123,7 @@ func TestAggregator_EmitsPerSourceMetrics(t *testing.T) {
 	}}
 	bad := &fakeAdapter{name: "bad", err: errors.New("scrape boom")}
 
-	agg := aggregator.New(registry(t, good, bad), 1*time.Second, m)
+	agg := aggregator.New(registry(t, good, bad), 1*time.Second, m, nil)
 	agg.Search(context.Background(), "x")
 
 	if got := histogramSampleCount(t, reg, "kvasir_scrape_duration_seconds", map[string]string{"adapter": "good", "status": model.StatusOK}); got != 1 {
@@ -156,7 +156,7 @@ func TestAggregator_EmitsPerSourceMetrics(t *testing.T) {
 // nil metrics — the test suite leans on this widely.
 func TestAggregator_NilMetricsIsSafe(t *testing.T) {
 	a := &fakeAdapter{name: "a", results: []model.Result{{Title: "x", Source: "a", DetailURL: "https://a"}}}
-	agg := aggregator.New(registry(t, a), 1*time.Second, nil)
+	agg := aggregator.New(registry(t, a), 1*time.Second, nil, nil)
 	resp := agg.Search(context.Background(), "x")
 	if len(resp.Results) != 1 {
 		t.Errorf("expected 1 result, got %d", len(resp.Results))
@@ -201,7 +201,7 @@ func TestAggregator_Recent_FanOut(t *testing.T) {
 	b := &fakeAdapter{name: "b", results: []model.Result{{Title: "B1", Source: "b"}, {Title: "B2", Source: "b"}}}
 	bad := &fakeAdapter{name: "bad", err: errors.New("recent failed")}
 
-	agg := aggregator.New(registry(t, a, b, bad), 1*time.Second, nil)
+	agg := aggregator.New(registry(t, a, b, bad), 1*time.Second, nil, nil)
 	resp := agg.Recent(context.Background())
 
 	if got := len(resp.Results); got != 3 {
@@ -226,7 +226,7 @@ func TestAggregator_RunsAdaptersInParallel(t *testing.T) {
 	b := &fakeAdapter{name: "b", delay: 100 * time.Millisecond, results: []model.Result{{Title: "B1", Source: "b"}}}
 	c := &fakeAdapter{name: "c", delay: 100 * time.Millisecond, results: []model.Result{{Title: "C1", Source: "c"}}}
 
-	agg := aggregator.New(registry(t, a, b, c), 1*time.Second, nil)
+	agg := aggregator.New(registry(t, a, b, c), 1*time.Second, nil, nil)
 
 	start := time.Now()
 	resp := agg.Search(context.Background(), "x")
@@ -251,7 +251,7 @@ func TestAggregator_OneFailureDoesNotDerailOthers(t *testing.T) {
 	bad := &fakeAdapter{name: "bad", err: errors.New("scrape boom")}
 	other := &fakeAdapter{name: "other", results: []model.Result{{Title: "ok2", Source: "other"}}}
 
-	agg := aggregator.New(registry(t, good, bad, other), 1*time.Second, nil)
+	agg := aggregator.New(registry(t, good, bad, other), 1*time.Second, nil, nil)
 
 	resp := agg.Search(context.Background(), "x")
 
@@ -274,7 +274,7 @@ func TestAggregator_TimeoutClassifiedAsTimeoutNotError(t *testing.T) {
 	fast := &fakeAdapter{name: "fast", results: []model.Result{{Title: "y", Source: "fast"}}}
 
 	// per-adapter timeout 50ms, slow will trip it
-	agg := aggregator.New(registry(t, slow, fast), 50*time.Millisecond, nil)
+	agg := aggregator.New(registry(t, slow, fast), 50*time.Millisecond, nil, nil)
 
 	resp := agg.Search(context.Background(), "x")
 
@@ -291,7 +291,7 @@ func TestAggregator_TimeoutClassifiedAsTimeoutNotError(t *testing.T) {
 
 func TestAggregator_DefaultTimeoutWhenZeroProvided(t *testing.T) {
 	a := &fakeAdapter{name: "a", results: []model.Result{}}
-	agg := aggregator.New(registry(t, a), 0, nil) // 0 should fall back to internal default
+	agg := aggregator.New(registry(t, a), 0, nil, nil) // 0 should fall back to internal default
 
 	// Just verify it runs without blocking forever; actual default value is implementation detail.
 	done := make(chan struct{})
@@ -307,7 +307,7 @@ func TestAggregator_DefaultTimeoutWhenZeroProvided(t *testing.T) {
 }
 
 func TestAggregator_EmptyRegistryReturnsEmptyResponse(t *testing.T) {
-	agg := aggregator.New(adapter.NewRegistry(), 1*time.Second, nil)
+	agg := aggregator.New(adapter.NewRegistry(), 1*time.Second, nil, nil)
 	resp := agg.Search(context.Background(), "anything")
 
 	if len(resp.Results) != 0 {
@@ -323,7 +323,7 @@ func TestAggregator_EmptyRegistryReturnsEmptyResponse(t *testing.T) {
 
 func TestAggregator_DurationReported(t *testing.T) {
 	a := &fakeAdapter{name: "a", delay: 50 * time.Millisecond, results: []model.Result{}}
-	agg := aggregator.New(registry(t, a), 1*time.Second, nil)
+	agg := aggregator.New(registry(t, a), 1*time.Second, nil, nil)
 
 	resp := agg.Search(context.Background(), "x")
 
@@ -334,7 +334,7 @@ func TestAggregator_DurationReported(t *testing.T) {
 
 func TestAggregator_ParentContextCancelPropagates(t *testing.T) {
 	slow := &fakeAdapter{name: "slow", delay: 500 * time.Millisecond, results: []model.Result{}}
-	agg := aggregator.New(registry(t, slow), 1*time.Second, nil)
+	agg := aggregator.New(registry(t, slow), 1*time.Second, nil, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately

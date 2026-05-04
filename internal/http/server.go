@@ -15,6 +15,7 @@ import (
 	"github.com/rflpazini/kvasir/internal/adapter"
 	"github.com/rflpazini/kvasir/internal/aggregator"
 	"github.com/rflpazini/kvasir/internal/cache"
+	"github.com/rflpazini/kvasir/internal/health"
 	"github.com/rflpazini/kvasir/internal/observability"
 )
 
@@ -34,6 +35,7 @@ type Deps struct {
 	Aggregator *aggregator.Aggregator
 	Cache      *cache.Client
 	PromGather prometheus.Gatherer
+	Health     *health.Tracker
 }
 
 // NewServer wires Echo with middleware, routes and handlers and returns the

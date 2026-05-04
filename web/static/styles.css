@@ -358,6 +358,23 @@ a { color: inherit; text-decoration: none; }
     color: var(--ember-bright);
 }
 
+/*
+ * Degraded source: faded glyph + dashed border, but still clickable so the
+ * user can toggle the chip on or off. The dashed border + reduced opacity
+ * shifts the read from "kvasir broke" to "the upstream is dead" without
+ * changing the layout.
+ */
+.chip--degraded {
+    opacity: 0.5;
+    border-style: dashed;
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+}
+
+.chip--degraded:hover {
+    opacity: 0.85;
+}
+
 /* ----- stats strip ------------------------------------------------------ */
 
 .stats {

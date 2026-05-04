@@ -19,6 +19,7 @@ import (
 	"github.com/rflpazini/kvasir/internal/adapter"
 	"github.com/rflpazini/kvasir/internal/aggregator"
 	"github.com/rflpazini/kvasir/internal/cache"
+	"github.com/rflpazini/kvasir/internal/health"
 	apphttp "github.com/rflpazini/kvasir/internal/http"
 	"github.com/rflpazini/kvasir/internal/model"
 	"github.com/rflpazini/kvasir/internal/observability"
@@ -67,7 +68,8 @@ func newHarness(t *testing.T, debug bool, results []model.Result, err error) *ha
 	metrics := observability.NewMetrics(promReg)
 	logger := observability.NewLogger("error")
 
-	agg := aggregator.New(reg, 500*time.Millisecond, metrics)
+	tracker := health.NewTracker()
+	agg := aggregator.New(reg, 500*time.Millisecond, metrics, tracker)
 
 	e := apphttp.NewServer(apphttp.Config{
 		EnableDebugEndpoints: debug,
@@ -78,6 +80,7 @@ func newHarness(t *testing.T, debug bool, results []model.Result, err error) *ha
 		Aggregator: agg,
 		Cache:      c,
 		PromGather: promReg,
+		Health:     tracker,
 	})
 	return &harness{echo: e, cache: c, mr: mr, a: a}
 }
@@ -431,9 +434,47 @@ func TestHandler_HealthzReportsAdapters(t *testing.T) {
 	if body["status"] != "ok" {
 		t.Errorf("overall status = %v", body["status"])
 	}
-	adapters := body["adapters"].(map[string]any)
-	if _, has := adapters["fake"]; !has {
-		t.Error("fake adapter missing from /healthz")
+	adapters := body["adapters"].([]any)
+	if len(adapters) != 1 {
+		t.Fatalf("adapters len = %d, want 1", len(adapters))
+	}
+	first := adapters[0].(map[string]any)
+	if first["name"] != "fake" {
+		t.Errorf("adapter name = %v, want fake", first["name"])
+	}
+	// Untouched tracker → status=unknown, degraded=false (idle is NOT
+	// failing — degrading on never-observed produced false positives
+	// during server startup before any scrape had run).
+	if first["degraded"] != false {
+		t.Errorf("untouched adapter degraded = %v, want false (idle != failing)", first["degraded"])
+	}
+	if first["status"] != "unknown" {
+		t.Errorf("untouched adapter status = %v, want unknown", first["status"])
+	}
+}
+
+// TestHandler_HealthzReflectsTrackerState verifies the rolling state from
+// a real Search call propagates: a fake that returns results bumps the
+// tracker via observeSuccess, and /healthz next call shows status=ok,
+// degraded=false, with a non-empty last_success_at.
+func TestHandler_HealthzReflectsTrackerState(t *testing.T) {
+	results := []model.Result{{Title: "x", Source: "fake"}}
+	h := newHarness(t, false, results, nil)
+
+	if rec, _ := h.do(t, stdhttp.MethodGet, "/api/search?q=warm"); rec.Code != 200 {
+		t.Fatalf("warm: %d", rec.Code)
+	}
+
+	_, body := h.do(t, stdhttp.MethodGet, "/healthz")
+	first := body["adapters"].([]any)[0].(map[string]any)
+	if first["status"] != "ok" {
+		t.Errorf("status = %v after success, want ok", first["status"])
+	}
+	if first["degraded"] != false {
+		t.Errorf("degraded = %v after fresh success, want false", first["degraded"])
+	}
+	if first["last_success_at"] == nil || first["last_success_at"] == "" {
+		t.Errorf("last_success_at empty after success: %v", first["last_success_at"])
 	}
 }
 
