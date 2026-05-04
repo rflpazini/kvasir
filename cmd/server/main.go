@@ -73,7 +73,7 @@ func run() error {
 	// Cloudflare-fronted sites (eg comando.la) routinely take 15–25s on the
 	// first request after a session expiry. Direct-HTTP adapters return well
 	// within 2s, so the higher ceiling does not affect the warm path.
-	agg := aggregator.New(registry, 30*time.Second)
+	agg := aggregator.New(registry, 30*time.Second, metrics)
 
 	srv := apphttp.NewServer(apphttp.Config{
 		StaticDir:            getenv("STATIC_DIR", "web/static"),

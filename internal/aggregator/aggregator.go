@@ -17,6 +17,7 @@ import (
 
 	"github.com/rflpazini/kvasir/internal/adapter"
 	"github.com/rflpazini/kvasir/internal/model"
+	"github.com/rflpazini/kvasir/internal/observability"
 )
 
 // Aggregator fans out a query to every registered adapter and collapses the
@@ -24,17 +25,20 @@ import (
 type Aggregator struct {
 	registry       *adapter.Registry
 	adapterTimeout time.Duration
+	metrics        *observability.Metrics
 }
 
 // New creates an Aggregator. adapterTimeout caps the time any single adapter
-// has to return results; siblings keep running.
-func New(registry *adapter.Registry, adapterTimeout time.Duration) *Aggregator {
+// has to return results; siblings keep running. Metrics is optional — pass
+// nil in tests that do not exercise the observability layer.
+func New(registry *adapter.Registry, adapterTimeout time.Duration, metrics *observability.Metrics) *Aggregator {
 	if adapterTimeout <= 0 {
 		adapterTimeout = 8 * time.Second
 	}
 	return &Aggregator{
 		registry:       registry,
 		adapterTimeout: adapterTimeout,
+		metrics:        metrics,
 	}
 }
 
@@ -76,16 +80,20 @@ func (a *Aggregator) fanOut(ctx context.Context, op func(context.Context, adapte
 			scrapeCtx, cancel := context.WithTimeout(gctx, a.adapterTimeout)
 			defer cancel()
 
+			scrapeStart := time.Now()
 			res, err := op(scrapeCtx, ad)
+			elapsed := time.Since(scrapeStart).Seconds()
 
 			mu.Lock()
 			defer mu.Unlock()
 
 			if err != nil {
+				status := classifyStatus(err)
 				stats[ad.Name()] = model.SourceStat{
-					Status:   classifyStatus(err),
+					Status:   status,
 					ErrorMsg: err.Error(),
 				}
+				a.observeError(ad.Name(), status, elapsed)
 				return nil // best-effort: never cancel siblings
 			}
 
@@ -93,6 +101,7 @@ func (a *Aggregator) fanOut(ctx context.Context, op func(context.Context, adapte
 				Count:  len(res),
 				Status: model.StatusOK,
 			}
+			a.observeSuccess(ad.Name(), elapsed, len(res))
 			results = append(results, res...)
 			return nil
 		})
@@ -124,4 +133,26 @@ func classifyStatus(err error) string {
 		return model.StatusTimeout
 	}
 	return model.StatusError
+}
+
+// observeSuccess emits the per-source metrics for a healthy scrape and
+// resets the consecutive-failures gauge.
+func (a *Aggregator) observeSuccess(adapter string, elapsed float64, count int) {
+	if a.metrics == nil {
+		return
+	}
+	a.metrics.ScrapeDuration.WithLabelValues(adapter, model.StatusOK).Observe(elapsed)
+	a.metrics.ResultsReturned.WithLabelValues(adapter).Observe(float64(count))
+	a.metrics.ConsecutiveFailures.WithLabelValues(adapter).Set(0)
+}
+
+// observeError emits the per-source metrics for a failed scrape, including
+// the error category, and bumps the consecutive-failures gauge.
+func (a *Aggregator) observeError(adapter, status string, elapsed float64) {
+	if a.metrics == nil {
+		return
+	}
+	a.metrics.ScrapeDuration.WithLabelValues(adapter, status).Observe(elapsed)
+	a.metrics.ScrapeErrors.WithLabelValues(adapter, status).Inc()
+	a.metrics.ConsecutiveFailures.WithLabelValues(adapter).Inc()
 }
