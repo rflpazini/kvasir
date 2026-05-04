@@ -1,34 +1,150 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-<meta charset="utf-8">
-<meta name="robots" content="noindex,nofollow">
-<title>Kvasir</title>
-<script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
-<style>
-  :root { color-scheme: dark; }
-  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-         max-width: 960px; margin: 2rem auto; padding: 0 1rem; background: #0d1117; color: #c9d1d9; }
-  h1 { margin: 0 0 1.5rem; font-weight: 600; letter-spacing: -0.02em; }
-  .muted { color: #8b949e; font-size: 0.9rem; }
-  form { display: flex; gap: 0.5rem; margin-bottom: 2rem; }
-  input[type=search] { flex: 1; padding: 0.6rem 0.8rem; border: 1px solid #30363d;
-                        border-radius: 6px; background: #161b22; color: inherit; font-size: 1rem; }
-  button { padding: 0.6rem 1.2rem; border: 0; border-radius: 6px; background: #238636;
-           color: #fff; cursor: pointer; font-weight: 600; }
-  button:hover { background: #2ea043; }
-  #results { margin-top: 1rem; }
-</style>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="robots" content="noindex,nofollow">
+    <meta name="theme-color" content="#0c1014">
+    <title>Kvasir</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 24'><path d='M2 2 L2 22 M2 12 L11 5 M2 12 L11 19' stroke='%23d4a24c' stroke-width='2.2' fill='none' stroke-linecap='square'/></svg>">
+    <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <h1>Kvasir</h1>
-  <p class="muted">Stack privada. Acesso restrito a Tailscale/LAN.</p>
+    <div class="shell">
 
-  <form hx-get="/api/search" hx-target="#results" hx-swap="innerHTML">
-    <input type="search" name="q" placeholder="busca" autocomplete="off" autofocus required>
-    <button type="submit">Buscar</button>
-  </form>
+        <!-- masthead -->
+        <header class="masthead">
+            <a class="brand" href="/" aria-label="Kvasir">
+                <svg class="brand__rune" viewBox="0 0 16 24" aria-hidden="true">
+                    <path d="M2 2 L2 22 M2 12 L11 5 M2 12 L11 19" />
+                </svg>
+                <h1 class="brand__wordmark">Kvasir</h1>
+            </a>
+            <p class="masthead__tag">Stack privada · LAN apenas</p>
+        </header>
 
-  <div id="results"></div>
+        <!-- hero / search -->
+        <section class="hero" aria-label="Consulta">
+            <p class="hero__lede">
+                Agregador doméstico de fontes em paralelo.
+                <em>Pergunte qualquer coisa</em>; Kvasir consulta as fontes registradas e devolve o que cada uma viu.
+            </p>
+
+            <form class="search" id="search-form" autocomplete="off" role="search">
+                <input
+                    class="search__input"
+                    id="q"
+                    name="q"
+                    type="search"
+                    placeholder="busque por título…"
+                    autocomplete="off"
+                    spellcheck="false"
+                    autofocus
+                    required
+                    aria-label="termo de busca">
+                <button class="search__submit" type="submit">Consultar</button>
+            </form>
+
+            <div class="search__hint">
+                <span class="kbd">⌘</span><span class="kbd">K</span>
+                <span>foca a busca</span>
+                <span aria-hidden="true">·</span>
+                <span class="kbd">esc</span>
+                <span>limpa</span>
+            </div>
+        </section>
+
+        <!-- source filters -->
+        <section class="filters" aria-label="Fontes registradas">
+            <span class="filters__label">Fontes</span>
+            <div class="chips" id="source-chips" role="group" aria-label="Filtrar por fonte"></div>
+        </section>
+
+        <div class="rule-etched" role="presentation"></div>
+
+        <!-- stats strip (hidden until first response) -->
+        <div class="stats" id="stats" hidden>
+            <span><strong id="stat-count">0</strong> resultados</span>
+            <span class="stats__sep" aria-hidden="true">·</span>
+            <span><strong id="stat-duration">0</strong> ms</span>
+            <span class="stats__sep" aria-hidden="true">·</span>
+            <span id="stat-sources" aria-label="fontes que responderam">—</span>
+            <span class="stats__cache" id="stats-cache" hidden>
+                <span class="ember-dot" aria-hidden="true"></span>
+                <span>resposta em cache</span>
+            </span>
+        </div>
+
+        <!-- results -->
+        <main class="results" id="results" aria-live="polite" aria-busy="false">
+            <div class="notice notice--initial" id="initial-notice">
+                <p>O que vai consultar hoje?</p>
+            </div>
+        </main>
+
+        <!-- footer / colophon -->
+        <footer class="colophon">
+            uso doméstico
+            <span class="colophon__rune" aria-hidden="true">·</span>
+            sem indexação pública
+            <span class="colophon__rune" aria-hidden="true">·</span>
+            single-user
+        </footer>
+    </div>
+
+    <!-- inline templates -->
+
+    <template id="tpl-skeleton">
+        <div class="skeleton" aria-hidden="true">
+            <div class="skeleton-card"></div>
+            <div class="skeleton-card"></div>
+            <div class="skeleton-card"></div>
+        </div>
+    </template>
+
+    <template id="tpl-card">
+        <article class="card">
+            <header class="card__header">
+                <h2 class="card__title"></h2>
+                <span class="card__source"></span>
+            </header>
+            <div class="card__meta"></div>
+            <div class="card__actions">
+                <a class="btn btn--primary" data-action="open" target="_blank" rel="noopener noreferrer">
+                    <svg class="btn__icon" viewBox="0 0 16 16" aria-hidden="true">
+                        <path d="M9 2 H14 V7" />
+                        <line x1="14" y1="2" x2="7" y2="9" />
+                        <path d="M12 9 V13 a1 1 0 0 1 -1 1 H3 a1 1 0 0 1 -1 -1 V5 a1 1 0 0 1 1 -1 H7" />
+                    </svg>
+                    Abrir página
+                </a>
+                <button class="btn btn--ghost" data-action="copy-magnet" type="button" disabled>
+                    <svg class="btn__icon" viewBox="0 0 16 16" aria-hidden="true">
+                        <rect x="5" y="5" width="9" height="9" rx="1.5" />
+                        <path d="M3 11 V3 a1 1 0 0 1 1 -1 H11" />
+                    </svg>
+                    <span data-copy-label>Copiar magnet</span>
+                </button>
+            </div>
+        </article>
+    </template>
+
+    <template id="tpl-empty">
+        <div class="notice">
+            <p>Nada encontrado para <strong></strong>.</p>
+        </div>
+    </template>
+
+    <template id="tpl-error">
+        <div class="notice notice--error" role="alert">
+            <h3>Falha ao consultar</h3>
+            <code></code>
+            <div class="notice__action">
+                <button class="btn btn--ghost" type="button" data-action="retry">Tentar novamente</button>
+            </div>
+        </div>
+    </template>
+
+    <script src="/app.js" defer></script>
 </body>
 </html>
