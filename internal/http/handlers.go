@@ -14,6 +14,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/rflpazini/kvasir/internal/adapter"
 	"github.com/rflpazini/kvasir/internal/health"
 	"github.com/rflpazini/kvasir/internal/model"
 )
@@ -181,6 +182,71 @@ func (h *handlers) storeCache(ctx context.Context, key string, resp model.Search
 	defer cancel()
 	if err := h.deps.Cache.SetSearch(storeCtx, key, payload, cacheTTL); err != nil {
 		h.deps.Logger.Warn("cache store failed", "key", key, "err", err.Error())
+	}
+}
+
+// magnet resolves the magnet URI for a single result on demand. The
+// request carries source + detail_url; the handler routes to the
+// registered adapter, validates the URL belongs to that source (the
+// adapter does this too — this is defense in depth), and caches the
+// resolved URI for 5 minutes keyed by detail_url. Adapters whose site
+// does not inline magnets return adapter.ErrMagnetUnsupported, which
+// surfaces as 404 so the frontend can hide the copy button.
+func (h *handlers) magnet(c echo.Context) error {
+	source := strings.TrimSpace(c.QueryParam("source"))
+	detail := strings.TrimSpace(c.QueryParam("detail"))
+	if source == "" || detail == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "source and detail are required")
+	}
+
+	ad, ok := h.deps.Registry.Get(source)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotFound, "unknown source: "+source)
+	}
+
+	cacheKey := magnetCacheKey(source, detail)
+	ctx := c.Request().Context()
+
+	if h.deps.Cache != nil {
+		lookupCtx, cancel := context.WithTimeout(ctx, cacheLookupBudget)
+		if uri, hit := h.deps.Cache.GetString(lookupCtx, cacheKey); hit {
+			cancel()
+			h.deps.Metrics.CacheHits.Inc()
+			return c.JSON(http.StatusOK, echo.Map{"magnet": uri, "cached": true})
+		}
+		cancel()
+		h.deps.Metrics.CacheMisses.Inc()
+	}
+
+	uri, err := ad.Magnet(ctx, detail)
+	if errors.Is(err, adapter.ErrMagnetUnsupported) {
+		return echo.NewHTTPError(http.StatusNotFound, "source does not expose magnets")
+	}
+	if err != nil {
+		h.deps.Logger.Warn("magnet fetch failed", "source", source, "err", err.Error())
+		return echo.NewHTTPError(http.StatusBadGateway, "could not resolve magnet")
+	}
+
+	if h.deps.Cache != nil {
+		h.storeMagnetCache(ctx, cacheKey, uri)
+	}
+	return c.JSON(http.StatusOK, echo.Map{"magnet": uri, "cached": false})
+}
+
+// magnetCacheKey hashes source+detail so the resulting key is bounded
+// in size regardless of URL length. Using SearchResponse.Query as a
+// pass-through field for the cached magnet keeps the cache layer
+// reusable without adding a second redis key namespace just for this.
+func magnetCacheKey(source, detail string) string {
+	sum := sha256.Sum256([]byte(source + "|" + detail))
+	return "magnet:v1:" + hex.EncodeToString(sum[:])
+}
+
+func (h *handlers) storeMagnetCache(ctx context.Context, key, uri string) {
+	storeCtx, cancel := context.WithTimeout(ctx, cacheLookupBudget)
+	defer cancel()
+	if err := h.deps.Cache.SetString(storeCtx, key, uri, 5*time.Minute); err != nil {
+		h.deps.Logger.Warn("magnet cache store failed", "err", err.Error())
 	}
 }
 

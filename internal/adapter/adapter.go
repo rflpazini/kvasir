@@ -8,9 +8,16 @@ package adapter
 
 import (
 	"context"
+	"errors"
 
 	"github.com/rflpazini/kvasir/internal/model"
 )
+
+// ErrMagnetUnsupported is returned by adapters whose source does not
+// expose a magnet URI on the detail page (some sites redirect through
+// an external download host instead of inlining the magnet). Callers
+// should surface this as "abrir página" rather than a hard error.
+var ErrMagnetUnsupported = errors.New("adapter: magnet not supported by this source")
 
 // Adapter is the contract every site implementation satisfies.
 type Adapter interface {
@@ -28,6 +35,13 @@ type Adapter interface {
 	// Implementations source from RSS when available, falling back to the
 	// site homepage HTML.
 	Recent(ctx context.Context) ([]model.Result, error)
+
+	// Magnet fetches the detail page for a single result and returns the
+	// magnet URI. Adapters whose site does not inline magnets should
+	// return ErrMagnetUnsupported so the UI falls back to "open page".
+	// Implementations MUST validate that detailURL belongs to the
+	// adapter's site (defense against SSRF).
+	Magnet(ctx context.Context, detailURL string) (string, error)
 
 	// HealthCheck performs a cheap probe (typically a HEAD on the homepage)
 	// and reports whether the site is reachable. Used by /healthz.

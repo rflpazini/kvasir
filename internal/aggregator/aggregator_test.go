@@ -48,6 +48,10 @@ func (f *fakeAdapter) Recent(ctx context.Context) ([]model.Result, error) {
 	return f.Search(ctx, "")
 }
 
+func (f *fakeAdapter) Magnet(_ context.Context, _ string) (string, error) {
+	return "", adapter.ErrMagnetUnsupported
+}
+
 func (f *fakeAdapter) HealthCheck(_ context.Context) error { return nil }
 
 func registry(t *testing.T, adapters ...adapter.Adapter) *adapter.Registry {

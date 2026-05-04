@@ -83,3 +83,22 @@ func (c *Client) GetSearch(ctx context.Context, key string) ([]byte, error) {
 func (c *Client) SetSearch(ctx context.Context, key string, payload []byte, ttl time.Duration) error {
 	return c.rdb.Set(ctx, key, payload, ttl).Err()
 }
+
+// GetString returns the cached string value for key, or false on miss.
+// Used for atomic-string keys (eg the magnet endpoint) so callers do
+// not have to wrap a single string in a SearchResponse just to fit the
+// existing JSON-in-bytes contract.
+func (c *Client) GetString(ctx context.Context, key string) (string, bool) {
+	v, err := c.rdb.Get(ctx, key).Result()
+	if err != nil {
+		return "", false
+	}
+	return v, true
+}
+
+// SetString stores a string value with the given TTL. Errors are
+// returned so the caller can decide whether to log; on a homelab
+// single-instance redis a write failure is non-fatal.
+func (c *Client) SetString(ctx context.Context, key, value string, ttl time.Duration) error {
+	return c.rdb.Set(ctx, key, value, ttl).Err()
+}

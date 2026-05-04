@@ -1,11 +1,25 @@
 package adapter_test
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/rflpazini/kvasir/internal/adapter"
 )
+
+// TestComando_MagnetUnsupported locks the per-source contract: comando
+// returns ErrMagnetUnsupported so the handler returns 404 and the
+// frontend hides the magnet button. If a future contributor stubs
+// Magnet to "" + nil error, the handler quietly serves "200 {magnet:''}"
+// — this test catches that.
+func TestComando_MagnetUnsupported(t *testing.T) {
+	c := adapter.NewComando(nil)
+	if _, err := c.Magnet(context.Background(), "https://comando.la/x"); !errors.Is(err, adapter.ErrMagnetUnsupported) {
+		t.Errorf("err = %v, want ErrMagnetUnsupported", err)
+	}
+}
 
 func TestComando_ParseSearch_Interstellar(t *testing.T) {
 	html := loadFixture(t, "comando", "search_interstellar.html")
