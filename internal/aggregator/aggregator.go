@@ -9,6 +9,7 @@ package aggregator
 import (
 	"context"
 	"errors"
+	"sort"
 	"sync"
 	"time"
 
@@ -97,6 +98,19 @@ func (a *Aggregator) fanOut(ctx context.Context, op func(context.Context, adapte
 		})
 	}
 	_ = g.Wait()
+
+	// Stable order — adapters race to completion, so the goroutine append
+	// order would otherwise scramble the response. Primary key is Source;
+	// secondary key DetailURL guards future adapters that might fan out
+	// internally (eg parallel detail fetches) and lose their own ordering.
+	// Two identical requests therefore return byte-equal payloads (cache
+	// observability + reproducible test fixtures).
+	sort.SliceStable(results, func(i, j int) bool {
+		if results[i].Source != results[j].Source {
+			return results[i].Source < results[j].Source
+		}
+		return results[i].DetailURL < results[j].DetailURL
+	})
 
 	return model.SearchResponse{
 		Results:     results,

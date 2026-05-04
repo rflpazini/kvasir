@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -48,6 +49,12 @@ func New(endpoint string, hc *http.Client) *Client {
 
 // Fetch issues a GET via FlareSolverr and returns the rendered HTML body.
 // maxTimeoutMs is forwarded to FlareSolverr; pass 0 for the default 60s.
+//
+// On a stale-session response from the solver the cached session is
+// invalidated AND the call is retried exactly once with a fresh session,
+// so a single Fetch caller never sees the recovery as a failure (the
+// practical effect: parallel callers that all hit a dead session
+// converge on a one-attempt-per-call recovery instead of N failures).
 func (c *Client) Fetch(ctx context.Context, url string, maxTimeoutMs int) ([]byte, error) {
 	if c == nil {
 		return nil, errors.New("flaresolverr: nil client")
@@ -56,6 +63,23 @@ func (c *Client) Fetch(ctx context.Context, url string, maxTimeoutMs int) ([]byt
 		maxTimeoutMs = 60_000
 	}
 
+	body, err := c.fetchOnce(ctx, url, maxTimeoutMs)
+	if err == nil {
+		return body, nil
+	}
+	if !errors.Is(err, errStaleSession) {
+		return nil, err
+	}
+	// Single bounded retry with a fresh session.
+	return c.fetchOnce(ctx, url, maxTimeoutMs)
+}
+
+// errStaleSession signals that the upstream told us our cached session
+// no longer exists. Wrapped (not returned) so callers see a normal
+// error message; the sentinel is only consumed by Fetch's retry loop.
+var errStaleSession = errors.New("flaresolverr: stale session, retrying")
+
+func (c *Client) fetchOnce(ctx context.Context, url string, maxTimeoutMs int) ([]byte, error) {
 	session, err := c.ensureSession(ctx)
 	if err != nil {
 		// Session creation is an optimization; fall back to session-less
@@ -111,12 +135,31 @@ func (c *Client) Fetch(ctx context.Context, url string, maxTimeoutMs int) ([]byt
 		return nil, fmt.Errorf("flaresolverr: decode: %w", err)
 	}
 	if out.Status != "ok" {
+		if isStaleSessionMessage(out.Message) {
+			c.invalidateSession(session)
+			// The first attempt's caller gets the sentinel and retries
+			// with a fresh session; subsequent goroutines that also hit
+			// the dead session each retry once on their own.
+			return nil, fmt.Errorf("%w: %s", errStaleSession, out.Message)
+		}
 		return nil, fmt.Errorf("flaresolverr: %s: %s", out.Status, out.Message)
 	}
 	if out.Solution.Status >= 400 {
 		return nil, fmt.Errorf("flaresolverr: solved page returned %d", out.Solution.Status)
 	}
 	return []byte(out.Solution.Response), nil
+}
+
+// isStaleSessionMessage returns true for the canonical upstream phrases
+// FlareSolverr emits when a cached session is gone. Anchored on the
+// strings produced by the upstream sessions service (see FlareSolverr
+// SessionsService.get) instead of a loose "session" substring, so an
+// unrelated error mentioning the word does not invalidate a healthy
+// session by accident.
+func isStaleSessionMessage(msg string) bool {
+	m := strings.ToLower(msg)
+	return strings.Contains(m, "session not found") ||
+		strings.Contains(m, "session does not exist")
 }
 
 // Health returns nil if the FlareSolverr endpoint is reachable. Useful for /healthz.
@@ -182,6 +225,20 @@ func (c *Client) ensureSession(ctx context.Context) (string, error) {
 	}
 	c.session = out.Session
 	return c.session, nil
+}
+
+// invalidateSession drops the cached session ID, but only if it still
+// matches `id` — guards against a concurrent caller having already
+// rotated the session before we noticed it was stale.
+func (c *Client) invalidateSession(id string) {
+	if id == "" {
+		return
+	}
+	c.mu.Lock()
+	if c.session == id {
+		c.session = ""
+	}
+	c.mu.Unlock()
 }
 
 // CloseSession destroys the cached session on the FlareSolverr side. Best-effort.
