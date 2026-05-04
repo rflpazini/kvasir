@@ -60,6 +60,15 @@
             <div class="chips" id="source-chips" role="group" aria-label="Filtrar por fonte"></div>
         </section>
 
+        <!-- quality filters -->
+        <section class="filters" aria-label="Filtro de qualidade">
+            <span class="filters__label">Qualidade</span>
+            <div class="chips" id="quality-chips" role="group" aria-label="Filtrar por qualidade">
+                <button type="button" class="chip" data-quality="4K" aria-pressed="false">4K</button>
+                <button type="button" class="chip" data-quality="1080p" aria-pressed="false">1080p</button>
+            </div>
+        </section>
+
         <div class="rule-etched" role="presentation"></div>
 
         <!-- stats strip (hidden until first response) -->
@@ -107,6 +116,7 @@
             <header class="card__header">
                 <h2 class="card__title"></h2>
                 <span class="card__source"></span>
+                <span class="card__quality" hidden></span>
             </header>
             <div class="card__meta"></div>
             <div class="card__actions">

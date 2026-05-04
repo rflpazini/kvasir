@@ -89,6 +89,7 @@ func ParseComando(htmlBytes []byte) ([]model.Result, error) {
 		out = append(out, model.Result{
 			Title:     title,
 			Source:    comandoName,
+			Quality:   model.ParseQuality(title),
 			DetailURL: href,
 		})
 	})
@@ -107,6 +108,7 @@ func ParseComando(htmlBytes []byte) ([]model.Result, error) {
 			out = append(out, model.Result{
 				Title:     title,
 				Source:    comandoName,
+				Quality:   model.ParseQuality(title),
 				DetailURL: href,
 			})
 		})

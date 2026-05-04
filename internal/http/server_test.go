@@ -175,6 +175,89 @@ func TestHandler_SearchLimitTruncatesAfterCacheLookup(t *testing.T) {
 	}
 }
 
+func TestHandler_SearchQualityFilter(t *testing.T) {
+	results := []model.Result{
+		{Title: "A 2160p", Source: "fake", Quality: model.Quality4K, DetailURL: "https://x/a"},
+		{Title: "B 1080p", Source: "fake", Quality: model.Quality1080p, DetailURL: "https://x/b"},
+		{Title: "C 720p", Source: "fake", Quality: model.QualityOther, DetailURL: "https://x/c"},
+		{Title: "D 4K", Source: "fake", Quality: model.Quality4K, DetailURL: "https://x/d"},
+	}
+
+	t.Run("no filter returns all", func(t *testing.T) {
+		h := newHarness(t, false, results, nil)
+		_, body := h.do(t, stdhttp.MethodGet, "/api/search?q=movie")
+		if got := len(body["results"].([]any)); got != 4 {
+			t.Errorf("expected 4 results, got %d", got)
+		}
+	})
+
+	t.Run("quality=4k returns only 4K", func(t *testing.T) {
+		h := newHarness(t, false, results, nil)
+		_, body := h.do(t, stdhttp.MethodGet, "/api/search?q=movie&quality=4k")
+		got := body["results"].([]any)
+		if len(got) != 2 {
+			t.Errorf("expected 2 results, got %d", len(got))
+		}
+		for _, r := range got {
+			if r.(map[string]any)["quality"] != "4K" {
+				t.Errorf("got non-4K result: %+v", r)
+			}
+		}
+	})
+
+	t.Run("quality=1080p returns only 1080p", func(t *testing.T) {
+		h := newHarness(t, false, results, nil)
+		_, body := h.do(t, stdhttp.MethodGet, "/api/search?q=movie&quality=1080p")
+		got := body["results"].([]any)
+		if len(got) != 1 {
+			t.Errorf("expected 1 result, got %d", len(got))
+		}
+	})
+
+	t.Run("quality=4k,1080p returns both buckets", func(t *testing.T) {
+		h := newHarness(t, false, results, nil)
+		_, body := h.do(t, stdhttp.MethodGet, "/api/search?q=movie&quality=4k,1080p")
+		got := body["results"].([]any)
+		if len(got) != 3 {
+			t.Errorf("expected 3 results (2x 4K + 1x 1080p), got %d", len(got))
+		}
+	})
+
+	t.Run("unknown quality token is ignored, others honored", func(t *testing.T) {
+		h := newHarness(t, false, results, nil)
+		_, body := h.do(t, stdhttp.MethodGet, "/api/search?q=movie&quality=720p,4k")
+		got := body["results"].([]any)
+		if len(got) != 2 {
+			t.Errorf("expected 2 results (only 4K honored), got %d", len(got))
+		}
+	})
+
+	t.Run("cache stores full set, filter applied per call", func(t *testing.T) {
+		h := newHarness(t, false, results, nil)
+
+		// First call without filter: warms cache with full set.
+		_, body1 := h.do(t, stdhttp.MethodGet, "/api/search?q=cachefilter")
+		if got := len(body1["results"].([]any)); got != 4 {
+			t.Fatalf("first call expected 4, got %d", got)
+		}
+
+		// Second call with filter: cache hit, but only filtered subset returned.
+		_, body2 := h.do(t, stdhttp.MethodGet, "/api/search?q=cachefilter&quality=1080p")
+		if body2["cached"] != true {
+			t.Error("expected cache hit on filtered call")
+		}
+		if got := len(body2["results"].([]any)); got != 1 {
+			t.Errorf("filtered call expected 1, got %d", got)
+		}
+
+		// Third call without filter: cache must still hold full set.
+		_, body3 := h.do(t, stdhttp.MethodGet, "/api/search?q=cachefilter")
+		if got := len(body3["results"].([]any)); got != 4 {
+			t.Errorf("full-set call after filter expected 4, got %d (cache leaked filter)", got)
+		}
+	})
+}
+
 func TestHandler_SearchAdapterErrorRecordedInSourceStats(t *testing.T) {
 	h := newHarness(t, false, nil, errors.New("scrape boom"))
 

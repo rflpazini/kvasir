@@ -120,6 +120,7 @@ func ParseTorrentDosFilmes(htmlBytes []byte) ([]model.Result, error) {
 		out = append(out, model.Result{
 			Title:     title,
 			Source:    tdfName,
+			Quality:   model.ParseQuality(title),
 			DetailURL: href,
 		})
 	})

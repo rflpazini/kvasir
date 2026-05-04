@@ -44,6 +44,7 @@ func (h *handlers) search(c echo.Context) error {
 	}
 
 	limit := parseLimit(c.QueryParam("limit"))
+	qualities := parseQualityFilter(c.QueryParam("quality"))
 
 	ctx := c.Request().Context()
 	key := cacheKey(q)
@@ -52,7 +53,7 @@ func (h *handlers) search(c echo.Context) error {
 		if cached, ok := h.lookupCache(ctx, key); ok {
 			h.deps.Metrics.CacheHits.Inc()
 			cached.Cached = true
-			cached.Results = applyLimit(cached.Results, limit)
+			cached.Results = applyLimit(model.FilterByQuality(cached.Results, qualities), limit)
 			return c.JSON(http.StatusOK, cached)
 		}
 	}
@@ -65,11 +66,13 @@ func (h *handlers) search(c echo.Context) error {
 	h.deps.Metrics.RequestDuration.Observe(time.Since(timer).Seconds())
 	resp.Query = q
 
+	// Cache the FULL set (pre-filter), so subsequent calls with different
+	// filters all hit the cache. Filtering is a per-request concern.
 	if h.deps.Cache != nil {
 		h.storeCache(ctx, key, resp)
 	}
 
-	resp.Results = applyLimit(resp.Results, limit)
+	resp.Results = applyLimit(model.FilterByQuality(resp.Results, qualities), limit)
 	return c.JSON(http.StatusOK, resp)
 }
 
@@ -152,6 +155,33 @@ func parseLimit(raw string) int {
 		return maxLimit
 	}
 	return v
+}
+
+// parseQualityFilter parses a comma-separated quality list (e.g. "4k,1080p")
+// into the canonical Quality slice. Unknown tokens are ignored. An empty or
+// missing parameter yields nil (no filtering).
+func parseQualityFilter(raw string) []model.Quality {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]model.Quality, 0, len(parts))
+	seen := make(map[model.Quality]struct{}, len(parts))
+	for _, p := range parts {
+		q, ok := model.QualityFromString(p)
+		if !ok {
+			continue
+		}
+		if _, dup := seen[q]; dup {
+			continue
+		}
+		seen[q] = struct{}{}
+		out = append(out, q)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func applyLimit(results []model.Result, limit int) []model.Result {

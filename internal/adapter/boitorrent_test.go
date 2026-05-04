@@ -72,6 +72,10 @@ func TestBoitorrent_ParseSearch_SingleResult(t *testing.T) {
 	if r.Source != "boitorrent" {
 		t.Errorf("Source = %q, want %q", r.Source, "boitorrent")
 	}
+	// Fixture title lists both 4K and 1080P; 4K wins per precedence rule.
+	if r.Quality != model.Quality4K {
+		t.Errorf("Quality = %q, want %q (title carries 4K marker)", r.Quality, model.Quality4K)
+	}
 }
 
 func TestBoitorrent_ParseSearch_NoResults(t *testing.T) {
