@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	comandoName    = "comando"
-	comandoBaseURL = "https://comando.la"
+	comandoName            = "comando"
+	comandoBaseURL         = "https://comando.la"
+	comandoFetchTimeoutMs  = 60_000
 )
 
 // Comando is the adapter for comando.la, a Cloudflare-fronted site reachable
@@ -48,11 +49,25 @@ func (c *Comando) Search(ctx context.Context, query string) ([]model.Result, err
 	params.Set("s", q)
 	u.RawQuery = params.Encode()
 
-	html, err := c.solver.Fetch(ctx, u.String(), 60_000)
+	html, err := c.solver.Fetch(ctx, u.String(), comandoFetchTimeoutMs)
 	if err != nil {
 		return nil, fmt.Errorf("comando: fetch via flaresolverr: %w", err)
 	}
 
+	return ParseComando(html)
+}
+
+// Recent implements Adapter — fetches the comando.la homepage via
+// FlareSolverr and parses the WordPress posts (same article structure
+// used by Search, so ParseComando handles both inputs).
+func (c *Comando) Recent(ctx context.Context) ([]model.Result, error) {
+	if c.solver == nil {
+		return nil, fmt.Errorf("comando: no flaresolverr configured")
+	}
+	html, err := c.solver.Fetch(ctx, comandoBaseURL+"/", comandoFetchTimeoutMs)
+	if err != nil {
+		return nil, fmt.Errorf("comando: fetch home via flaresolverr: %w", err)
+	}
 	return ParseComando(html)
 }
 

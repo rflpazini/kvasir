@@ -39,6 +39,11 @@ func (f *fakeAdapter) Search(_ context.Context, _ string) ([]model.Result, error
 	return f.results, f.err
 }
 
+func (f *fakeAdapter) Recent(_ context.Context) ([]model.Result, error) {
+	f.calls.Add(1)
+	return f.results, f.err
+}
+
 func (f *fakeAdapter) HealthCheck(_ context.Context) error { return f.err }
 
 type harness struct {
@@ -316,6 +321,66 @@ func TestServer_SetsNoEdgeCacheHeader(t *testing.T) {
 	if got := rec.Header().Get("Cache-Control"); !strings.Contains(got, "no-cache") {
 		t.Errorf("Cache-Control = %q, want no-cache", got)
 	}
+}
+
+func TestHandler_RecentReturnsAggregate(t *testing.T) {
+	results := []model.Result{
+		{Title: "Latest 4K", Source: "fake", Quality: model.Quality4K, DetailURL: "https://x/a"},
+		{Title: "Latest 1080p", Source: "fake", Quality: model.Quality1080p, DetailURL: "https://x/b"},
+	}
+
+	t.Run("happy path returns all", func(t *testing.T) {
+		h := newHarness(t, false, results, nil)
+		rec, body := h.do(t, stdhttp.MethodGet, "/api/recent")
+		if rec.Code != stdhttp.StatusOK {
+			t.Fatalf("status = %d", rec.Code)
+		}
+		if got := len(body["results"].([]any)); got != 2 {
+			t.Errorf("expected 2, got %d", got)
+		}
+		if body["query"] != "" {
+			t.Errorf("Recent must not echo a query, got %v", body["query"])
+		}
+	})
+
+	t.Run("quality filter applies", func(t *testing.T) {
+		h := newHarness(t, false, results, nil)
+		_, body := h.do(t, stdhttp.MethodGet, "/api/recent?quality=4k")
+		got := body["results"].([]any)
+		if len(got) != 1 || got[0].(map[string]any)["quality"] != "4K" {
+			t.Errorf("expected 1x4K, got %+v", got)
+		}
+	})
+
+	t.Run("second call uses cache", func(t *testing.T) {
+		h := newHarness(t, false, results, nil)
+		if rec, _ := h.do(t, stdhttp.MethodGet, "/api/recent"); rec.Code != 200 {
+			t.Fatalf("first call: %d", rec.Code)
+		}
+		_, body2 := h.do(t, stdhttp.MethodGet, "/api/recent")
+		if body2["cached"] != true {
+			t.Error("expected cache hit on second call")
+		}
+		if got := h.a.calls.Load(); got != 1 {
+			t.Errorf("adapter called %d times, want 1", got)
+		}
+	})
+
+	t.Run("cache write failure does not break the response", func(t *testing.T) {
+		// Close the miniredis backing store after harness construction so
+		// the very next SetSearch fails. The handler must still return 200
+		// with the freshly aggregated payload.
+		h := newHarness(t, false, results, nil)
+		h.mr.Close()
+
+		rec, body := h.do(t, stdhttp.MethodGet, "/api/recent")
+		if rec.Code != stdhttp.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		if got := len(body["results"].([]any)); got != 2 {
+			t.Errorf("expected 2 results despite cache failure, got %d", got)
+		}
+	})
 }
 
 func TestHandler_HealthzReportsAdapters(t *testing.T) {

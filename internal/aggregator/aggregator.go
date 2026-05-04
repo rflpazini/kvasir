@@ -40,8 +40,26 @@ func New(registry *adapter.Registry, adapterTimeout time.Duration) *Aggregator {
 // Search runs the query across all adapters in parallel and returns the
 // normalized aggregate. Cached is left to the caller (the HTTP handler).
 func (a *Aggregator) Search(ctx context.Context, query string) model.SearchResponse {
-	start := time.Now()
+	resp := a.fanOut(ctx, func(ctx context.Context, ad adapter.Adapter) ([]model.Result, error) {
+		return ad.Search(ctx, query)
+	})
+	resp.Query = query
+	return resp
+}
 
+// Recent fans out to every adapter's Recent() to build the "Lançamentos"
+// view. Same per-source resilience as Search: failures and timeouts are
+// recorded in SourceStats without aborting siblings.
+func (a *Aggregator) Recent(ctx context.Context) model.SearchResponse {
+	return a.fanOut(ctx, func(ctx context.Context, ad adapter.Adapter) ([]model.Result, error) {
+		return ad.Recent(ctx)
+	})
+}
+
+// fanOut runs `op` against every registered adapter in parallel, capturing
+// per-source stats and merging the results. Used by both Search and Recent.
+func (a *Aggregator) fanOut(ctx context.Context, op func(context.Context, adapter.Adapter) ([]model.Result, error)) model.SearchResponse {
+	start := time.Now()
 	adapters := a.registry.All()
 
 	var (
@@ -57,7 +75,7 @@ func (a *Aggregator) Search(ctx context.Context, query string) model.SearchRespo
 			scrapeCtx, cancel := context.WithTimeout(gctx, a.adapterTimeout)
 			defer cancel()
 
-			res, err := ad.Search(scrapeCtx, query)
+			res, err := op(scrapeCtx, ad)
 
 			mu.Lock()
 			defer mu.Unlock()
@@ -81,7 +99,6 @@ func (a *Aggregator) Search(ctx context.Context, query string) model.SearchRespo
 	_ = g.Wait()
 
 	return model.SearchResponse{
-		Query:       query,
 		Results:     results,
 		SourceStats: stats,
 		DurationMs:  time.Since(start).Milliseconds(),

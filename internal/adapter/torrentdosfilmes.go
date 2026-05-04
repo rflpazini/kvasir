@@ -3,6 +3,7 @@ package adapter
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -80,6 +81,34 @@ func (t *TorrentDosFilmes) Search(ctx context.Context, query string) ([]model.Re
 	return ParseTorrentDosFilmes(body)
 }
 
+// Recent implements Adapter — fetches the WordPress RSS feed at /feed/
+// and parses items into normalized Results. RSS is preferred over HTML
+// scraping because the schema is stable.
+func (t *TorrentDosFilmes) Recent(ctx context.Context) ([]model.Result, error) {
+	u := tdfBaseURL + "/feed/"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("torrentdosfilmes: build feed request: %w", err)
+	}
+	req.Header.Set("User-Agent", tdfUA)
+	req.Header.Set("Accept", "application/rss+xml,application/xml;q=0.9,*/*;q=0.5")
+	req.Header.Set("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
+
+	resp, err := t.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("torrentdosfilmes: feed http error: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("torrentdosfilmes: feed status %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("torrentdosfilmes: read feed: %w", err)
+	}
+	return ParseTorrentDosFilmesFeed(body)
+}
+
 // HealthCheck implements Adapter.
 func (t *TorrentDosFilmes) HealthCheck(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, tdfBaseURL+"/", nil)
@@ -126,4 +155,58 @@ func ParseTorrentDosFilmes(htmlBytes []byte) ([]model.Result, error) {
 	})
 
 	return out, nil
+}
+
+// rssChannel is the minimal subset of WordPress RSS 2.0 we care about.
+type rssChannel struct {
+	XMLName xml.Name `xml:"rss"`
+	Items   []struct {
+		Title   string `xml:"title"`
+		Link    string `xml:"link"`
+		PubDate string `xml:"pubDate"`
+	} `xml:"channel>item"`
+}
+
+// ParseTorrentDosFilmesFeed extracts items from the WordPress RSS feed
+// returned by /feed/. PubDate parsing is best-effort (RFC 1123 / RFC 822);
+// failures leave PublishedAt nil so the rest of the result still renders.
+func ParseTorrentDosFilmesFeed(xmlBytes []byte) ([]model.Result, error) {
+	var ch rssChannel
+	if err := xml.Unmarshal(xmlBytes, &ch); err != nil {
+		return nil, fmt.Errorf("torrentdosfilmes: parse feed: %w", err)
+	}
+	out := make([]model.Result, 0, len(ch.Items))
+	for _, it := range ch.Items {
+		title := strings.TrimSpace(it.Title)
+		link := strings.TrimSpace(it.Link)
+		if title == "" || link == "" {
+			continue
+		}
+		r := model.Result{
+			Title:     title,
+			Source:    tdfName,
+			Quality:   model.ParseQuality(title),
+			DetailURL: link,
+		}
+		if t, err := parseRSSDate(it.PubDate); err == nil {
+			r.PublishedAt = &t
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+// parseRSSDate accepts the date formats WordPress emits in pubDate. Both
+// RFC 1123 and RFC 1123Z appear in the wild depending on the timezone used.
+func parseRSSDate(raw string) (time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, fmt.Errorf("empty pubDate")
+	}
+	for _, layout := range []string{time.RFC1123Z, time.RFC1123, time.RFC822Z, time.RFC822} {
+		if t, err := time.Parse(layout, raw); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unrecognized pubDate: %q", raw)
 }

@@ -38,6 +38,11 @@ func (f *fakeAdapter) Search(ctx context.Context, _ string) ([]model.Result, err
 	return f.results, nil
 }
 
+func (f *fakeAdapter) Recent(ctx context.Context) ([]model.Result, error) {
+	// Reuse Search semantics in tests; "recent" is just another fan-out path.
+	return f.Search(ctx, "")
+}
+
 func (f *fakeAdapter) HealthCheck(_ context.Context) error { return nil }
 
 func registry(t *testing.T, adapters ...adapter.Adapter) *adapter.Registry {
@@ -47,6 +52,31 @@ func registry(t *testing.T, adapters ...adapter.Adapter) *adapter.Registry {
 		r.Register(a)
 	}
 	return r
+}
+
+func TestAggregator_Recent_FanOut(t *testing.T) {
+	a := &fakeAdapter{name: "a", results: []model.Result{{Title: "A1", Source: "a"}}}
+	b := &fakeAdapter{name: "b", results: []model.Result{{Title: "B1", Source: "b"}, {Title: "B2", Source: "b"}}}
+	bad := &fakeAdapter{name: "bad", err: errors.New("recent failed")}
+
+	agg := aggregator.New(registry(t, a, b, bad), 1*time.Second)
+	resp := agg.Recent(context.Background())
+
+	if got := len(resp.Results); got != 3 {
+		t.Errorf("expected 3 results from healthy adapters, got %d", got)
+	}
+	if resp.SourceStats["a"].Status != model.StatusOK {
+		t.Errorf("a status = %q", resp.SourceStats["a"].Status)
+	}
+	if resp.SourceStats["b"].Count != 2 {
+		t.Errorf("b count = %d, want 2", resp.SourceStats["b"].Count)
+	}
+	if resp.SourceStats["bad"].Status != model.StatusError {
+		t.Errorf("bad status = %q", resp.SourceStats["bad"].Status)
+	}
+	if resp.Query != "" {
+		t.Errorf("Recent must not set Query, got %q", resp.Query)
+	}
 }
 
 func TestAggregator_RunsAdaptersInParallel(t *testing.T) {
