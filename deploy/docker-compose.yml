@@ -1,0 +1,80 @@
+services:
+  kvasir:
+    image: ghcr.io/rflpazini/kvasir:latest
+    container_name: kvasir
+    restart: unless-stopped
+    environment:
+      LISTEN_ADDR: ":8080"
+      REDIS_ADDR: redis:6379
+      FLARESOLVERR_URL: http://flaresolverr:8191/v1
+      LOG_LEVEL: info
+      ENABLE_DEBUG_ENDPOINTS: "false"
+    volumes:
+      - /appdata/kvasir/config:/config:ro
+      - /appdata/kvasir/logs:/logs
+    networks:
+      - kvasir-net
+      - public-net
+    depends_on:
+      redis:
+        condition: service_healthy
+      flaresolverr:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "/server", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.kvasir.rule: "Host(`kvasir.lan.rflpazini.sh`)"
+      traefik.http.routers.kvasir.entrypoints: "websecure"
+      traefik.http.routers.kvasir.tls: "true"
+      traefik.http.routers.kvasir.middlewares: "lan-only@file,secured-defaults@file"
+      traefik.http.services.kvasir.loadbalancer.server.port: "8080"
+      traefik.docker.network: "public-net"
+
+  redis:
+    image: redis:7-alpine
+    container_name: kvasir-redis
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru
+    volumes:
+      - /appdata/kvasir/data/redis:/data
+    networks:
+      - kvasir-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: kvasir-flaresolverr
+    restart: unless-stopped
+    environment:
+      LOG_LEVEL: info
+      TZ: America/Sao_Paulo
+    networks:
+      # FlareSolverr precisa egress real para resolver Cloudflare,
+      # então fica em public-net além de kvasir-net (interno).
+      - kvasir-net
+      - public-net
+
+networks:
+  kvasir-net:
+    driver: bridge
+    internal: true
+  public-net:
+    external: true

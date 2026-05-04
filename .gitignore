@@ -1,0 +1,28 @@
+# Build
+/bin/
+/dist/
+/server
+*.exe
+
+# Test
+cover.out
+coverage.html
+*.test
+/tmp/
+
+# Editor
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Local config
+*.local.yaml
+*.local.env
+.env
+
+# Logs
+*.log
+
+# Captured fixtures sometimes have ephemeral data, but we DO commit testdata/
+# (golden fixtures are version-controlled by design)

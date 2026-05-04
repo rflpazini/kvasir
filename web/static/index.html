@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex,nofollow">
+<title>Kvasir</title>
+<script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         max-width: 960px; margin: 2rem auto; padding: 0 1rem; background: #0d1117; color: #c9d1d9; }
+  h1 { margin: 0 0 1.5rem; font-weight: 600; letter-spacing: -0.02em; }
+  .muted { color: #8b949e; font-size: 0.9rem; }
+  form { display: flex; gap: 0.5rem; margin-bottom: 2rem; }
+  input[type=search] { flex: 1; padding: 0.6rem 0.8rem; border: 1px solid #30363d;
+                        border-radius: 6px; background: #161b22; color: inherit; font-size: 1rem; }
+  button { padding: 0.6rem 1.2rem; border: 0; border-radius: 6px; background: #238636;
+           color: #fff; cursor: pointer; font-weight: 600; }
+  button:hover { background: #2ea043; }
+  #results { margin-top: 1rem; }
+</style>
+</head>
+<body>
+  <h1>Kvasir</h1>
+  <p class="muted">Stack privada. Acesso restrito a Tailscale/LAN.</p>
+
+  <form hx-get="/api/search" hx-target="#results" hx-swap="innerHTML">
+    <input type="search" name="q" placeholder="busca" autocomplete="off" autofocus required>
+    <button type="submit">Buscar</button>
+  </form>
+
+  <div id="results"></div>
+</body>
+</html>
