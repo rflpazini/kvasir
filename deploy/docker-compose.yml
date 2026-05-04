@@ -5,8 +5,11 @@
 #   - Traefik routes via docker-provider labels on this service. The kvasir
 #     container is dual-homed: `edge` so Traefik can reach it, and a private
 #     `kvasir-net` so Redis and FlareSolverr stay off the public network.
-#   - kvasir.rflpazini.sh resolves through Traefik with lan-only +
-#     secured-defaults middlewares (LAN-only access, single-user homelab).
+#   - kvasir.rflpazini.sh resolves through Traefik with secured-defaults
+#     (sane response headers + compression). Public access is fronted by
+#     Cloudflare tunnel; PROXY-protocol forwards the real client IP and the
+#     `lan-only` middleware does not apply since requests arrive from the
+#     internet via the tunnel.
 #
 # Bring up:
 #   docker compose -f /appdata/kvasir/deploy/docker-compose.yml up -d --build
@@ -54,7 +57,7 @@ services:
       traefik.http.routers.kvasir.tls.certresolver: "cloudflare"
       traefik.http.routers.kvasir.tls.domains[0].main: "rflpazini.sh"
       traefik.http.routers.kvasir.tls.domains[0].sans: "*.rflpazini.sh"
-      traefik.http.routers.kvasir.middlewares: "lan-only@file,secured-defaults@file"
+      traefik.http.routers.kvasir.middlewares: "secured-defaults@file"
       traefik.http.services.kvasir.loadbalancer.server.port: "8080"
       traefik.http.services.kvasir.loadbalancer.healthcheck.path: "/healthz"
       traefik.http.services.kvasir.loadbalancer.healthcheck.interval: "30s"
