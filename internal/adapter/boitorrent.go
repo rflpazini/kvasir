@@ -155,10 +155,12 @@ func ParseBoitorrentHome(htmlBytes []byte) ([]model.Result, error) {
 		// in a sibling badge `<div class="qualidade_capa">FULLHD</div>`),
 		// so concat both before parsing for the quality bucket.
 		qualityHint := strings.TrimSpace(s.Find("div.qualidade_capa").First().Text())
+		poster, _ := s.Find("img").First().Attr("src")
 		out = append(out, model.Result{
 			Title:     title,
 			Source:    boitorrentName,
 			Quality:   model.ParseQuality(title + " " + qualityHint),
+			PosterURL: strings.TrimSpace(poster),
 			DetailURL: href,
 		})
 	})
@@ -187,10 +189,12 @@ func ParseBoitorrent(htmlBytes []byte) ([]model.Result, error) {
 			return
 		}
 
+		poster, _ := s.Find("img").First().Attr("src")
 		out = append(out, model.Result{
 			Title:     title,
 			Source:    boitorrentName,
 			Quality:   model.ParseQuality(title),
+			PosterURL: strings.TrimSpace(poster),
 			DetailURL: href,
 		})
 	})

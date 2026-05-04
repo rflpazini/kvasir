@@ -13,6 +13,7 @@ type Result struct {
 	Category    string     `json:"category,omitempty"`
 	Source      string     `json:"source"`
 	Quality     Quality    `json:"quality,omitempty"`
+	PosterURL   string     `json:"poster_url,omitempty"`
 	PublishedAt *time.Time `json:"published_at,omitempty"`
 	DetailURL   string     `json:"detail_url"`
 }

@@ -263,6 +263,33 @@
         card.querySelector(".card__title").textContent = result.title || "(sem título)";
         card.querySelector(".card__source").textContent = result.source || "—";
 
+        // poster — when present, swap from the rune fallback to the lazy <img>.
+        // onerror keeps the image hidden so a broken link keeps the runic glyph.
+        const posterEl = card.querySelector(".card__poster");
+        const posterImg = card.querySelector(".card__poster-img");
+        if (result.poster_url) {
+            posterImg.alt = result.title || "";
+            const onLoad = () => { posterEl.dataset.state = "loaded"; };
+            const onError = () => { posterEl.dataset.state = "empty"; };
+            // {once:true} both detaches handlers after they fire and avoids
+            // the "load fires twice" quirk seen on cached posters in Chrome,
+            // where the synchronous complete-check below + the deferred
+            // event would otherwise mutate state on a detached card.
+            posterImg.addEventListener("load", onLoad, { once: true });
+            posterImg.addEventListener("error", onError, { once: true });
+            posterImg.src = result.poster_url;
+            // Browsers can complete cached loads before the listeners fire
+            // (especially with lazy-loaded images that the IntersectionObserver
+            // resolves synchronously). Re-check after assignment.
+            if (posterImg.complete) {
+                if (posterImg.naturalWidth > 0) onLoad();
+                else onError();
+            }
+        } else {
+            // No poster URL: stay in the rune fallback.
+            posterEl.dataset.state = "empty";
+        }
+
         // quality badge — hidden when bucket is "Other" (noise) or missing.
         const qualityEl = card.querySelector(".card__quality");
         if (result.quality && result.quality !== "Other") {

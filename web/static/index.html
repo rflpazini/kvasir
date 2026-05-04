@@ -7,7 +7,7 @@
     <meta name="theme-color" content="#0c1014">
     <title>Kvasir</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 24'><path d='M2 2 L2 22 M2 12 L11 5 M2 12 L11 19' stroke='%23d4a24c' stroke-width='2.2' fill='none' stroke-linecap='square'/></svg>">
-    <link rel="stylesheet" href="/styles.css?v=rl1">
+    <link rel="stylesheet" href="/styles.css?v=pc5">
 </head>
 <body>
     <div class="shell">
@@ -124,28 +124,36 @@
 
     <template id="tpl-card">
         <article class="card">
-            <header class="card__header">
-                <h2 class="card__title"></h2>
-                <span class="card__source"></span>
-                <span class="card__quality" hidden></span>
-            </header>
-            <div class="card__meta"></div>
-            <div class="card__actions">
-                <a class="btn btn--primary" data-action="open" target="_blank" rel="noopener noreferrer">
-                    <svg class="btn__icon" viewBox="0 0 16 16" aria-hidden="true">
-                        <path d="M9 2 H14 V7" />
-                        <line x1="14" y1="2" x2="7" y2="9" />
-                        <path d="M12 9 V13 a1 1 0 0 1 -1 1 H3 a1 1 0 0 1 -1 -1 V5 a1 1 0 0 1 1 -1 H7" />
-                    </svg>
-                    Abrir página
-                </a>
-                <button class="btn btn--ghost" data-action="copy-magnet" type="button" disabled>
-                    <svg class="btn__icon" viewBox="0 0 16 16" aria-hidden="true">
-                        <rect x="5" y="5" width="9" height="9" rx="1.5" />
-                        <path d="M3 11 V3 a1 1 0 0 1 1 -1 H11" />
-                    </svg>
-                    <span data-copy-label>Copiar magnet</span>
-                </button>
+            <div class="card__poster" data-state="loading" aria-hidden="true">
+                <svg class="card__poster-fallback" viewBox="0 0 16 24" aria-hidden="true">
+                    <path d="M2 2 L2 22 M2 12 L11 5 M2 12 L11 19" />
+                </svg>
+                <img class="card__poster-img" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">
+            </div>
+            <div class="card__body">
+                <header class="card__header">
+                    <h2 class="card__title"></h2>
+                    <span class="card__source"></span>
+                    <span class="card__quality" hidden></span>
+                </header>
+                <div class="card__meta"></div>
+                <div class="card__actions">
+                    <a class="btn btn--primary" data-action="open" target="_blank" rel="noopener noreferrer">
+                        <svg class="btn__icon" viewBox="0 0 16 16" aria-hidden="true">
+                            <path d="M9 2 H14 V7" />
+                            <line x1="14" y1="2" x2="7" y2="9" />
+                            <path d="M12 9 V13 a1 1 0 0 1 -1 1 H3 a1 1 0 0 1 -1 -1 V5 a1 1 0 0 1 1 -1 H7" />
+                        </svg>
+                        Abrir página
+                    </a>
+                    <button class="btn btn--ghost" data-action="copy-magnet" type="button" disabled>
+                        <svg class="btn__icon" viewBox="0 0 16 16" aria-hidden="true">
+                            <rect x="5" y="5" width="9" height="9" rx="1.5" />
+                            <path d="M3 11 V3 a1 1 0 0 1 1 -1 H11" />
+                        </svg>
+                        <span data-copy-label>Copiar magnet</span>
+                    </button>
+                </div>
             </div>
         </article>
     </template>
@@ -166,6 +174,6 @@
         </div>
     </template>
 
-    <script src="/app.js?v=rl1" defer></script>
+    <script src="/app.js?v=pc5" defer></script>
 </body>
 </html>
