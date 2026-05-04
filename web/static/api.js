@@ -41,11 +41,15 @@ export async function fetchJSON(url, signal) {
     return resp.json();
 }
 
-/** Pull the list of registered adapters from /healthz. Soft-fails to []. */
+/**
+ * Pull the per-source health snapshot from /healthz. Returns an array of
+ * { name, status, last_success_at, consecutive_failures, degraded }.
+ * Soft-fails to [] so the UI still renders without chips on partial outages.
+ */
 export async function loadAdapters() {
     try {
         const data = await fetchJSON("/healthz");
-        return Object.keys(data.adapters || {}).sort();
+        return data.adapters || [];
     } catch (err) {
         console.warn("kvasir: failed to load adapters", err);
         return [];

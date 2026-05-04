@@ -16,6 +16,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/rflpazini/kvasir/internal/adapter"
+	"github.com/rflpazini/kvasir/internal/health"
 	"github.com/rflpazini/kvasir/internal/model"
 	"github.com/rflpazini/kvasir/internal/observability"
 )
@@ -26,12 +27,13 @@ type Aggregator struct {
 	registry       *adapter.Registry
 	adapterTimeout time.Duration
 	metrics        *observability.Metrics
+	tracker        *health.Tracker
 }
 
 // New creates an Aggregator. adapterTimeout caps the time any single adapter
-// has to return results; siblings keep running. Metrics is optional — pass
-// nil in tests that do not exercise the observability layer.
-func New(registry *adapter.Registry, adapterTimeout time.Duration, metrics *observability.Metrics) *Aggregator {
+// has to return results; siblings keep running. Metrics and tracker are
+// optional — pass nil in tests that do not exercise observability.
+func New(registry *adapter.Registry, adapterTimeout time.Duration, metrics *observability.Metrics, tracker *health.Tracker) *Aggregator {
 	if adapterTimeout <= 0 {
 		adapterTimeout = 8 * time.Second
 	}
@@ -39,6 +41,7 @@ func New(registry *adapter.Registry, adapterTimeout time.Duration, metrics *obse
 		registry:       registry,
 		adapterTimeout: adapterTimeout,
 		metrics:        metrics,
+		tracker:        tracker,
 	}
 }
 
@@ -135,24 +138,28 @@ func classifyStatus(err error) string {
 	return model.StatusError
 }
 
-// observeSuccess emits the per-source metrics for a healthy scrape and
-// resets the consecutive-failures gauge.
+// observeSuccess emits the per-source metrics for a healthy scrape, resets
+// the consecutive-failures gauge, and stamps the health tracker.
 func (a *Aggregator) observeSuccess(adapter string, elapsed float64, count int) {
-	if a.metrics == nil {
-		return
+	if a.metrics != nil {
+		a.metrics.ScrapeDuration.WithLabelValues(adapter, model.StatusOK).Observe(elapsed)
+		a.metrics.ResultsReturned.WithLabelValues(adapter).Observe(float64(count))
+		a.metrics.ConsecutiveFailures.WithLabelValues(adapter).Set(0)
 	}
-	a.metrics.ScrapeDuration.WithLabelValues(adapter, model.StatusOK).Observe(elapsed)
-	a.metrics.ResultsReturned.WithLabelValues(adapter).Observe(float64(count))
-	a.metrics.ConsecutiveFailures.WithLabelValues(adapter).Set(0)
+	if a.tracker != nil {
+		a.tracker.RecordSuccess(adapter)
+	}
 }
 
-// observeError emits the per-source metrics for a failed scrape, including
-// the error category, and bumps the consecutive-failures gauge.
+// observeError emits the per-source metrics for a failed scrape, bumps the
+// consecutive-failures gauge, and tells the health tracker.
 func (a *Aggregator) observeError(adapter, status string, elapsed float64) {
-	if a.metrics == nil {
-		return
+	if a.metrics != nil {
+		a.metrics.ScrapeDuration.WithLabelValues(adapter, status).Observe(elapsed)
+		a.metrics.ScrapeErrors.WithLabelValues(adapter, status).Inc()
+		a.metrics.ConsecutiveFailures.WithLabelValues(adapter).Inc()
 	}
-	a.metrics.ScrapeDuration.WithLabelValues(adapter, status).Observe(elapsed)
-	a.metrics.ScrapeErrors.WithLabelValues(adapter, status).Inc()
-	a.metrics.ConsecutiveFailures.WithLabelValues(adapter).Inc()
+	if a.tracker != nil {
+		a.tracker.RecordFailure(adapter, status)
+	}
 }

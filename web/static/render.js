@@ -187,19 +187,32 @@ export function renderError(rootEl, tpl, msg, onRetry) {
     rootEl.appendChild(node);
 }
 
-/** Render the source-filter chips. `onToggle(name, chip)` mutates the active set. */
-export function renderSourceChips(host, names, onToggle) {
+/**
+ * Render the source-filter chips from the /healthz adapter snapshot.
+ * Each entry carries { name, status, degraded, ... }; degraded sources
+ * get a `chip--degraded` class so CSS can fade them. The chip stays
+ * pressable so the user can still toggle a degraded source on/off
+ * (eg to confirm the rest still work).
+ */
+export function renderSourceChips(host, adapters, onToggle) {
     clearChildren(host);
-    if (names.length === 0) {
+    if (adapters.length === 0) {
         host.appendChild(el("span", "filters__label", "(nenhuma registrada)"));
         return;
     }
-    names.forEach((name) => {
-        const chip = el("button", "chip", name);
+    adapters.forEach((adapter) => {
+        const className = adapter.degraded ? "chip chip--degraded" : "chip";
+        const chip = el("button", className, adapter.name);
         chip.type = "button";
-        chip.dataset.source = name;
+        chip.dataset.source = adapter.name;
         chip.setAttribute("aria-pressed", "true");
-        chip.addEventListener("click", () => onToggle(name, chip));
+        if (adapter.degraded) {
+            const ago = adapter.last_success_at
+                ? `último ok em ${new Date(adapter.last_success_at).toLocaleString("pt-BR")}`
+                : "sem scrape bem-sucedido";
+            chip.title = `${adapter.name} degradado — ${ago} (${adapter.consecutive_failures} falhas em sequência)`;
+        }
+        chip.addEventListener("click", () => onToggle(adapter.name, chip));
         host.appendChild(chip);
     });
 }

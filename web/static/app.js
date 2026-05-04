@@ -156,9 +156,9 @@ function toggleSource(name, chip) {
 }
 
 async function bootstrapSourceChips() {
-    const names = await loadAdapters();
-    names.forEach((n) => activeSources.add(n));
-    renderSourceChips(chipsHost, names, toggleSource);
+    const adapters = await loadAdapters();
+    adapters.forEach((a) => activeSources.add(a.name));
+    renderSourceChips(chipsHost, adapters, toggleSource);
 }
 
 // ---- magnet copy -----------------------------------------------------------

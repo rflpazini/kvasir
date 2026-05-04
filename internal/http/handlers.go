@@ -14,6 +14,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/rflpazini/kvasir/internal/health"
 	"github.com/rflpazini/kvasir/internal/model"
 )
 
@@ -183,12 +184,55 @@ func (h *handlers) storeCache(ctx context.Context, key string, resp model.Search
 	}
 }
 
-// health reports per-adapter availability.
+// health reports per-adapter availability + the rolling status the
+// tracker has observed (last successful scrape, current failure streak,
+// degraded flag). The frontend uses `degraded` to fade chips when an
+// adapter has been silent or failing for too long, so a single-user
+// homelab can tell upstream-dead from kvasir-broken at a glance.
 func (h *handlers) health(c echo.Context) error {
-	adapters := map[string]string{}
-	for _, a := range h.deps.Registry.All() {
-		adapters[a.Name()] = "ok"
+	const (
+		successWindow   = 30 * time.Minute
+		streakThreshold = 3
+	)
+
+	type adapterHealth struct {
+		Name                string `json:"name"`
+		Status              string `json:"status"`
+		LastSuccessAt       string `json:"last_success_at,omitempty"`
+		ConsecutiveFailures int    `json:"consecutive_failures"`
+		Degraded            bool   `json:"degraded"`
 	}
+
+	registered := h.deps.Registry.All()
+	adapters := make([]adapterHealth, 0, len(registered))
+	for _, a := range registered {
+		entry := adapterHealth{Name: a.Name(), Status: "unknown"}
+		if h.deps.Health != nil {
+			src, ok := h.deps.Health.Get(a.Name())
+			if !ok {
+				// Registered but never observed — present as degraded so
+				// the UI fades the chip until the first scrape lands. The
+				// alternative (status=ok, degraded=false) lies for the
+				// window between server start and the first /api/search.
+				src = health.Source{Name: a.Name()}
+			}
+			entry.Status = src.LastStatus
+			if entry.Status == "" {
+				entry.Status = "unknown"
+			}
+			entry.ConsecutiveFailures = src.ConsecutiveFailures
+			entry.Degraded = src.Degraded(successWindow, streakThreshold)
+			if !src.LastSuccessAt.IsZero() {
+				entry.LastSuccessAt = src.LastSuccessAt.UTC().Format(time.RFC3339)
+			}
+		} else {
+			// No tracker wired — treat as healthy to avoid false alarms in
+			// the legacy code paths (none today, but the field is optional).
+			entry.Status = "ok"
+		}
+		adapters = append(adapters, entry)
+	}
+
 	status := "ok"
 	if len(adapters) == 0 {
 		status = "no-adapters"
