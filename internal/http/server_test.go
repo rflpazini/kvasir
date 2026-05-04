@@ -62,11 +62,12 @@ func newHarness(t *testing.T, debug bool, results []model.Result, err error) *ha
 	a := &fakeAdapter{name: "fake", results: results, err: err}
 	reg := adapter.NewRegistry()
 	reg.Register(a)
-	agg := aggregator.New(reg, 500*time.Millisecond)
 
 	promReg := prometheus.NewRegistry()
 	metrics := observability.NewMetrics(promReg)
 	logger := observability.NewLogger("error")
+
+	agg := aggregator.New(reg, 500*time.Millisecond, metrics)
 
 	e := apphttp.NewServer(apphttp.Config{
 		EnableDebugEndpoints: debug,

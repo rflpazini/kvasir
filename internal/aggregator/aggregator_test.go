@@ -7,9 +7,14 @@ import (
 	"testing"
 	"time"
 
+	dto "github.com/prometheus/client_model/go"
+	"github.com/prometheus/client_golang/prometheus"
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/rflpazini/kvasir/internal/adapter"
 	"github.com/rflpazini/kvasir/internal/aggregator"
 	"github.com/rflpazini/kvasir/internal/model"
+	"github.com/rflpazini/kvasir/internal/observability"
 )
 
 // fakeAdapter is a controllable adapter.Adapter for unit tests.
@@ -74,7 +79,7 @@ func TestAggregator_FanOutResultsAreDeterministic(t *testing.T) {
 		{Title: "C1", Source: "c", DetailURL: "https://c/1"},
 	}}
 
-	agg := aggregator.New(registry(t, bSlow, aFast, cMid), 1*time.Second)
+	agg := aggregator.New(registry(t, bSlow, aFast, cMid), 1*time.Second, nil)
 
 	// Within `b` the adapter returned [B2, B1] (non-alphabetical), but
 	// the response sorts by DetailURL → B1 first, B2 second.
@@ -103,12 +108,100 @@ func equalStrings(a, b []string) bool {
 	return true
 }
 
+// TestAggregator_EmitsPerSourceMetrics verifies the aggregator wires the
+// declared collectors. After a single Search: each adapter has a sample
+// recorded against ScrapeDuration, the bad adapter bumps ScrapeErrors,
+// the good adapter bumps ResultsReturned, and ConsecutiveFailures gauge
+// reflects per-source streak (zeroed on success, incremented on error).
+func TestAggregator_EmitsPerSourceMetrics(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := observability.NewMetrics(reg)
+
+	good := &fakeAdapter{name: "good", results: []model.Result{
+		{Title: "G1", Source: "good", DetailURL: "https://g/1"},
+		{Title: "G2", Source: "good", DetailURL: "https://g/2"},
+	}}
+	bad := &fakeAdapter{name: "bad", err: errors.New("scrape boom")}
+
+	agg := aggregator.New(registry(t, good, bad), 1*time.Second, m)
+	agg.Search(context.Background(), "x")
+
+	if got := histogramSampleCount(t, reg, "kvasir_scrape_duration_seconds", map[string]string{"adapter": "good", "status": model.StatusOK}); got != 1 {
+		t.Errorf("good ScrapeDuration sample_count = %d, want 1", got)
+	}
+	if got := histogramSampleCount(t, reg, "kvasir_scrape_duration_seconds", map[string]string{"adapter": "bad", "status": model.StatusError}); got != 1 {
+		t.Errorf("bad ScrapeDuration{error} sample_count = %d, want 1", got)
+	}
+	if got := promtestutil.ToFloat64(m.ScrapeErrors.WithLabelValues("bad", model.StatusError)); got != 1 {
+		t.Errorf("ScrapeErrors{bad, error} = %v, want 1", got)
+	}
+	if got := histogramSampleCount(t, reg, "kvasir_results_returned", map[string]string{"adapter": "good"}); got != 1 {
+		t.Errorf("ResultsReturned{good} sample_count = %d, want 1", got)
+	}
+	if got := promtestutil.ToFloat64(m.ConsecutiveFailures.WithLabelValues("good")); got != 0 {
+		t.Errorf("ConsecutiveFailures{good} = %v, want 0", got)
+	}
+	if got := promtestutil.ToFloat64(m.ConsecutiveFailures.WithLabelValues("bad")); got != 1 {
+		t.Errorf("ConsecutiveFailures{bad} = %v, want 1", got)
+	}
+
+	// Second run: good keeps succeeding (gauge stays 0), bad accumulates.
+	agg.Search(context.Background(), "x")
+	if got := promtestutil.ToFloat64(m.ConsecutiveFailures.WithLabelValues("bad")); got != 2 {
+		t.Errorf("ConsecutiveFailures{bad} after 2 errors = %v, want 2", got)
+	}
+}
+
+// TestAggregator_NilMetricsIsSafe must NOT panic when the operator passes
+// nil metrics — the test suite leans on this widely.
+func TestAggregator_NilMetricsIsSafe(t *testing.T) {
+	a := &fakeAdapter{name: "a", results: []model.Result{{Title: "x", Source: "a", DetailURL: "https://a"}}}
+	agg := aggregator.New(registry(t, a), 1*time.Second, nil)
+	resp := agg.Search(context.Background(), "x")
+	if len(resp.Results) != 1 {
+		t.Errorf("expected 1 result, got %d", len(resp.Results))
+	}
+}
+
+// histogramSampleCount returns the sample_count for a histogram metric
+// matching the given name + label set.
+func histogramSampleCount(t *testing.T, reg *prometheus.Registry, name string, labels map[string]string) uint64 {
+	t.Helper()
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	for _, mf := range mfs {
+		if mf.GetName() != name {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			if histogramMatchesLabels(m, labels) {
+				return m.GetHistogram().GetSampleCount()
+			}
+		}
+	}
+	return 0
+}
+
+func histogramMatchesLabels(m *dto.Metric, want map[string]string) bool {
+	if len(m.GetLabel()) != len(want) {
+		return false
+	}
+	for _, lp := range m.GetLabel() {
+		if v, ok := want[lp.GetName()]; !ok || v != lp.GetValue() {
+			return false
+		}
+	}
+	return true
+}
+
 func TestAggregator_Recent_FanOut(t *testing.T) {
 	a := &fakeAdapter{name: "a", results: []model.Result{{Title: "A1", Source: "a"}}}
 	b := &fakeAdapter{name: "b", results: []model.Result{{Title: "B1", Source: "b"}, {Title: "B2", Source: "b"}}}
 	bad := &fakeAdapter{name: "bad", err: errors.New("recent failed")}
 
-	agg := aggregator.New(registry(t, a, b, bad), 1*time.Second)
+	agg := aggregator.New(registry(t, a, b, bad), 1*time.Second, nil)
 	resp := agg.Recent(context.Background())
 
 	if got := len(resp.Results); got != 3 {
@@ -133,7 +226,7 @@ func TestAggregator_RunsAdaptersInParallel(t *testing.T) {
 	b := &fakeAdapter{name: "b", delay: 100 * time.Millisecond, results: []model.Result{{Title: "B1", Source: "b"}}}
 	c := &fakeAdapter{name: "c", delay: 100 * time.Millisecond, results: []model.Result{{Title: "C1", Source: "c"}}}
 
-	agg := aggregator.New(registry(t, a, b, c), 1*time.Second)
+	agg := aggregator.New(registry(t, a, b, c), 1*time.Second, nil)
 
 	start := time.Now()
 	resp := agg.Search(context.Background(), "x")
@@ -158,7 +251,7 @@ func TestAggregator_OneFailureDoesNotDerailOthers(t *testing.T) {
 	bad := &fakeAdapter{name: "bad", err: errors.New("scrape boom")}
 	other := &fakeAdapter{name: "other", results: []model.Result{{Title: "ok2", Source: "other"}}}
 
-	agg := aggregator.New(registry(t, good, bad, other), 1*time.Second)
+	agg := aggregator.New(registry(t, good, bad, other), 1*time.Second, nil)
 
 	resp := agg.Search(context.Background(), "x")
 
@@ -181,7 +274,7 @@ func TestAggregator_TimeoutClassifiedAsTimeoutNotError(t *testing.T) {
 	fast := &fakeAdapter{name: "fast", results: []model.Result{{Title: "y", Source: "fast"}}}
 
 	// per-adapter timeout 50ms, slow will trip it
-	agg := aggregator.New(registry(t, slow, fast), 50*time.Millisecond)
+	agg := aggregator.New(registry(t, slow, fast), 50*time.Millisecond, nil)
 
 	resp := agg.Search(context.Background(), "x")
 
@@ -198,7 +291,7 @@ func TestAggregator_TimeoutClassifiedAsTimeoutNotError(t *testing.T) {
 
 func TestAggregator_DefaultTimeoutWhenZeroProvided(t *testing.T) {
 	a := &fakeAdapter{name: "a", results: []model.Result{}}
-	agg := aggregator.New(registry(t, a), 0) // 0 should fall back to internal default
+	agg := aggregator.New(registry(t, a), 0, nil) // 0 should fall back to internal default
 
 	// Just verify it runs without blocking forever; actual default value is implementation detail.
 	done := make(chan struct{})
@@ -214,7 +307,7 @@ func TestAggregator_DefaultTimeoutWhenZeroProvided(t *testing.T) {
 }
 
 func TestAggregator_EmptyRegistryReturnsEmptyResponse(t *testing.T) {
-	agg := aggregator.New(adapter.NewRegistry(), 1*time.Second)
+	agg := aggregator.New(adapter.NewRegistry(), 1*time.Second, nil)
 	resp := agg.Search(context.Background(), "anything")
 
 	if len(resp.Results) != 0 {
@@ -230,7 +323,7 @@ func TestAggregator_EmptyRegistryReturnsEmptyResponse(t *testing.T) {
 
 func TestAggregator_DurationReported(t *testing.T) {
 	a := &fakeAdapter{name: "a", delay: 50 * time.Millisecond, results: []model.Result{}}
-	agg := aggregator.New(registry(t, a), 1*time.Second)
+	agg := aggregator.New(registry(t, a), 1*time.Second, nil)
 
 	resp := agg.Search(context.Background(), "x")
 
@@ -241,7 +334,7 @@ func TestAggregator_DurationReported(t *testing.T) {
 
 func TestAggregator_ParentContextCancelPropagates(t *testing.T) {
 	slow := &fakeAdapter{name: "slow", delay: 500 * time.Millisecond, results: []model.Result{}}
-	agg := aggregator.New(registry(t, slow), 1*time.Second)
+	agg := aggregator.New(registry(t, slow), 1*time.Second, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
