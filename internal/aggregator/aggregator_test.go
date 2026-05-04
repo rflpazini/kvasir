@@ -56,21 +56,28 @@ func registry(t *testing.T, adapters ...adapter.Adapter) *adapter.Registry {
 
 // TestAggregator_FanOutResultsAreDeterministic verifies merged results
 // always come back in the same order regardless of which adapter happens
-// to finish first. Adapters are sorted by Name; within a source the
-// adapter's own order is preserved.
+// to finish first. Primary sort key is Source; secondary is DetailURL,
+// which doubles as a future-proof guard for adapters that themselves
+// fan out internally and would otherwise return in non-deterministic
+// order. The B adapter intentionally returns `B2` before `B1` to prove
+// the secondary key takes precedence over goroutine append order.
 func TestAggregator_FanOutResultsAreDeterministic(t *testing.T) {
 	bSlow := &fakeAdapter{name: "b", delay: 80 * time.Millisecond, results: []model.Result{
-		{Title: "B1", Source: "b"}, {Title: "B2", Source: "b"},
+		{Title: "B2", Source: "b", DetailURL: "https://b/2"},
+		{Title: "B1", Source: "b", DetailURL: "https://b/1"},
 	}}
 	aFast := &fakeAdapter{name: "a", results: []model.Result{
-		{Title: "A1", Source: "a"}, {Title: "A2", Source: "a"},
+		{Title: "A1", Source: "a", DetailURL: "https://a/1"},
+		{Title: "A2", Source: "a", DetailURL: "https://a/2"},
 	}}
 	cMid := &fakeAdapter{name: "c", delay: 30 * time.Millisecond, results: []model.Result{
-		{Title: "C1", Source: "c"},
+		{Title: "C1", Source: "c", DetailURL: "https://c/1"},
 	}}
 
 	agg := aggregator.New(registry(t, bSlow, aFast, cMid), 1*time.Second)
 
+	// Within `b` the adapter returned [B2, B1] (non-alphabetical), but
+	// the response sorts by DetailURL → B1 first, B2 second.
 	want := []string{"A1", "A2", "B1", "B2", "C1"}
 	for i := 0; i < 5; i++ {
 		resp := agg.Search(context.Background(), "x")

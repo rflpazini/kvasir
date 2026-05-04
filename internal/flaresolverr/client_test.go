@@ -142,12 +142,12 @@ func TestFlareSolverr_FallbackToSessionLessOnSessionCreateFailure(t *testing.T) 
 }
 
 func TestFlareSolverr_StaleSessionRecovery(t *testing.T) {
-	// FlareSolverr can drop a session server-side (browser context expires);
-	// the next Fetch must invalidate the cached session ID and recover by
-	// creating a fresh one on the call after, instead of returning forever.
+	// FlareSolverr emits "Session not found: <id>" when the browser context
+	// expires server-side (see upstream sessions.py — SessionsService.get).
+	// The client must invalidate the cached session AND retry the Fetch
+	// once with a fresh one so the caller sees a single successful return,
+	// not a failure followed by recovery on the next call.
 	var sessionCreates atomic.Int32
-	var fetchAttempts atomic.Int32
-	var firstFetchDone bool
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		req := readReq(t, r)
@@ -156,17 +156,8 @@ func TestFlareSolverr_StaleSessionRecovery(t *testing.T) {
 			n := sessionCreates.Add(1)
 			writeJSON(t, w, map[string]any{"status": "ok", "session": fmt.Sprintf("s-%d", n)})
 		case "request.get":
-			fetchAttempts.Add(1)
-			// First fetch succeeds, every subsequent fetch with the OLD session
-			// returns "session not found"; with the NEW session it succeeds.
-			if !firstFetchDone {
-				firstFetchDone = true
-				writeJSON(t, w, map[string]any{
-					"status": "ok",
-					"solution": map[string]any{"status": 200, "response": "first"},
-				})
-				return
-			}
+			// First session ID is dead — every request keyed on s-1 fails.
+			// The second (and onwards) creates ok.
 			if req["session"] == "s-1" {
 				writeJSON(t, w, map[string]any{
 					"status":  "error",
@@ -183,26 +174,48 @@ func TestFlareSolverr_StaleSessionRecovery(t *testing.T) {
 	defer srv.Close()
 
 	c := flaresolverr.New(srv.URL, nil)
-	if _, err := c.Fetch(context.Background(), "https://x/", 0); err != nil {
-		t.Fatalf("first fetch: %v", err)
-	}
-
-	// Second fetch hits the stale session and surfaces the error to the
-	// caller — but the client must clear its cached session so the third
-	// fetch creates a new one and succeeds.
-	if _, err := c.Fetch(context.Background(), "https://x/", 0); err == nil {
-		t.Fatal("second fetch must return the stale-session error")
-	}
-
 	body, err := c.Fetch(context.Background(), "https://x/", 0)
 	if err != nil {
-		t.Fatalf("third fetch must recover: %v", err)
+		t.Fatalf("fetch must recover internally: %v", err)
 	}
 	if string(body) != "recovered" {
 		t.Errorf("body = %q, want recovered", body)
 	}
 	if got := sessionCreates.Load(); got != 2 {
 		t.Errorf("session creates = %d, want 2 (recreated after stale)", got)
+	}
+}
+
+// TestFlareSolverr_UnrelatedSessionMessageDoesNotInvalidate guards against
+// the regression where a loose substring match on "session" would clear
+// a healthy cached ID on any error that happened to mention the word.
+func TestFlareSolverr_UnrelatedSessionMessageDoesNotInvalidate(t *testing.T) {
+	var sessionCreates atomic.Int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		req := readReq(t, r)
+		switch req["cmd"] {
+		case "sessions.create":
+			sessionCreates.Add(1)
+			writeJSON(t, w, map[string]any{"status": "ok", "session": "s-once"})
+		case "request.get":
+			writeJSON(t, w, map[string]any{
+				"status":  "error",
+				"message": "Session timeout exceeded waiting for cloudflare",
+			})
+		}
+	}))
+	defer srv.Close()
+
+	c := flaresolverr.New(srv.URL, nil)
+	if _, err := c.Fetch(context.Background(), "https://x/", 0); err == nil {
+		t.Fatal("expected timeout error to surface")
+	}
+	if _, err := c.Fetch(context.Background(), "https://x/", 0); err == nil {
+		t.Fatal("expected timeout error to surface again")
+	}
+	if got := sessionCreates.Load(); got != 1 {
+		t.Errorf("session creates = %d, want 1 (must NOT invalidate on unrelated error)", got)
 	}
 }
 
