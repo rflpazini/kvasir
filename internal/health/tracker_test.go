@@ -80,58 +80,93 @@ func TestTracker_SnapshotIsSortedByName(t *testing.T) {
 
 func TestTracker_Degraded(t *testing.T) {
 	now := time.Now()
+	const window = 30 * time.Minute
+	const streak = 3
 
-	// Healthy if last success was inside the window AND streak < threshold.
-	src := health.Source{Name: "a", LastSuccessAt: now, LastStatus: "ok", ConsecutiveFailures: 0}
-	if src.Degraded(30*time.Minute, 3) {
+	// Healthy when last attempt and last success are equal (every attempt
+	// has been a success).
+	src := health.Source{Name: "a", LastSuccessAt: now, LastAttemptAt: now, LastStatus: "ok"}
+	if src.Degraded(window, streak) {
 		t.Error("fresh success must not be degraded")
 	}
 
-	// Degrades on streak ≥ threshold.
+	// Degrades on streak ≥ threshold even with a recent success.
 	src.ConsecutiveFailures = 3
-	if !src.Degraded(30*time.Minute, 3) {
+	if !src.Degraded(window, streak) {
 		t.Error("streak == threshold must degrade")
 	}
 
-	// Degrades when last success is outside the window even with streak 0.
-	src = health.Source{Name: "b", LastSuccessAt: now.Add(-31 * time.Minute), LastStatus: "ok"}
-	if !src.Degraded(30*time.Minute, 3) {
-		t.Error("stale last success must degrade")
+	// Degrades when last attempt is recent but last success is older
+	// than the window — we have been trying and missing.
+	src = health.Source{
+		Name:          "b",
+		LastSuccessAt: now.Add(-31 * time.Minute),
+		LastAttemptAt: now,
+		LastStatus:    "error",
+	}
+	if !src.Degraded(window, streak) {
+		t.Error("attempt-success gap > window must degrade")
 	}
 
-	// Never seen a success → degraded.
+	// Never observed (zero LastAttemptAt) is NOT degraded — idle is not
+	// failing, and the previous false-positive eroded chip trust.
 	src = health.Source{Name: "c"}
-	if !src.Degraded(30*time.Minute, 3) {
-		t.Error("zero LastSuccessAt must degrade")
+	if src.Degraded(window, streak) {
+		t.Error("untouched source must NOT be degraded (idle != failing)")
+	}
+
+	// Idle but successful: last attempt == last success a long time ago
+	// must NOT be degraded — no failure since.
+	old := now.Add(-2 * time.Hour)
+	src = health.Source{Name: "d", LastSuccessAt: old, LastAttemptAt: old, LastStatus: "ok"}
+	if src.Degraded(window, streak) {
+		t.Error("idle-but-ok must not be degraded")
 	}
 }
 
-func TestTracker_ConcurrentRecord(t *testing.T) {
+// TestTracker_LifecycleRecoversAfterDegrade locks the rule's "recover"
+// direction: a source that has degraded via streak must drop back to
+// healthy after the next RecordSuccess.
+func TestTracker_LifecycleRecoversAfterDegrade(t *testing.T) {
 	tr := health.NewTracker()
 
-	const workers = 50
+	tr.RecordFailure("a", "error")
+	tr.RecordFailure("a", "error")
+	tr.RecordFailure("a", "error")
+	got, _ := tr.Get("a")
+	if !got.Degraded(health.DefaultSuccessWindow, health.DefaultStreakThreshold) {
+		t.Fatal("3 failures must put source in degraded state")
+	}
+
+	tr.RecordSuccess("a")
+	got, _ = tr.Get("a")
+	if got.Degraded(health.DefaultSuccessWindow, health.DefaultStreakThreshold) {
+		t.Errorf("RecordSuccess must clear degraded; got %+v", got)
+	}
+	if got.ConsecutiveFailures != 0 {
+		t.Errorf("streak = %d after recovery, want 0", got.ConsecutiveFailures)
+	}
+}
+
+// TestTracker_FailureStreakIsConserved proves no increment is lost
+// under contention. Run with `go test -race` to back this up with the
+// race detector — together they're the actual evidence of safety.
+func TestTracker_FailureStreakIsConserved(t *testing.T) {
+	tr := health.NewTracker()
+	const n = 1000
 	var wg sync.WaitGroup
-	wg.Add(workers)
-	for i := 0; i < workers; i++ {
-		i := i
+	wg.Add(n)
+	for i := 0; i < n; i++ {
 		go func() {
 			defer wg.Done()
-			if i%2 == 0 {
-				tr.RecordSuccess("a")
-			} else {
-				tr.RecordFailure("a", "error")
-			}
+			tr.RecordFailure("a", "error")
 		}()
 	}
 	wg.Wait()
 
-	// Last call wins; just verify the entry exists and the state is internally
-	// consistent (no panic, no negative streak).
-	src, ok := tr.Get("a")
-	if !ok {
-		t.Fatal("a missing")
-	}
-	if src.ConsecutiveFailures < 0 {
-		t.Errorf("streak negative: %d", src.ConsecutiveFailures)
+	src, _ := tr.Get("a")
+	if src.ConsecutiveFailures != n {
+		t.Fatalf("streak = %d, want %d (lost increment)", src.ConsecutiveFailures, n)
 	}
 }
+

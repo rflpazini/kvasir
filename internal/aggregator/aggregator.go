@@ -140,6 +140,11 @@ func classifyStatus(err error) string {
 
 // observeSuccess emits the per-source metrics for a healthy scrape, resets
 // the consecutive-failures gauge, and stamps the health tracker.
+//
+// Order matters: metrics first (lock-free atomic increments via
+// client_golang) and tracker last (RWMutex). A future observer should
+// be slotted at the end of the chain to keep the cheapest writes ahead
+// of the locking ones.
 func (a *Aggregator) observeSuccess(adapter string, elapsed float64, count int) {
 	if a.metrics != nil {
 		a.metrics.ScrapeDuration.WithLabelValues(adapter, model.StatusOK).Observe(elapsed)
@@ -152,7 +157,8 @@ func (a *Aggregator) observeSuccess(adapter string, elapsed float64, count int) 
 }
 
 // observeError emits the per-source metrics for a failed scrape, bumps the
-// consecutive-failures gauge, and tells the health tracker.
+// consecutive-failures gauge, and tells the health tracker. Same
+// metrics-first-tracker-last ordering as observeSuccess.
 func (a *Aggregator) observeError(adapter, status string, elapsed float64) {
 	if a.metrics != nil {
 		a.metrics.ScrapeDuration.WithLabelValues(adapter, status).Observe(elapsed)

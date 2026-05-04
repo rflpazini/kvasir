@@ -187,14 +187,13 @@ func (h *handlers) storeCache(ctx context.Context, key string, resp model.Search
 // health reports per-adapter availability + the rolling status the
 // tracker has observed (last successful scrape, current failure streak,
 // degraded flag). The frontend uses `degraded` to fade chips when an
-// adapter has been silent or failing for too long, so a single-user
-// homelab can tell upstream-dead from kvasir-broken at a glance.
+// adapter has been failing repeatedly, so a single-user homelab can
+// tell upstream-dead from kvasir-broken at a glance.
+//
+// Idle adapters (registered but never called, or only called
+// successfully a long time ago) are NOT marked degraded. Idle is not
+// failing — see Source.Degraded for the rationale.
 func (h *handlers) health(c echo.Context) error {
-	const (
-		successWindow   = 30 * time.Minute
-		streakThreshold = 3
-	)
-
 	type adapterHealth struct {
 		Name                string `json:"name"`
 		Status              string `json:"status"`
@@ -210,10 +209,6 @@ func (h *handlers) health(c echo.Context) error {
 		if h.deps.Health != nil {
 			src, ok := h.deps.Health.Get(a.Name())
 			if !ok {
-				// Registered but never observed — present as degraded so
-				// the UI fades the chip until the first scrape lands. The
-				// alternative (status=ok, degraded=false) lies for the
-				// window between server start and the first /api/search.
 				src = health.Source{Name: a.Name()}
 			}
 			entry.Status = src.LastStatus
@@ -221,13 +216,11 @@ func (h *handlers) health(c echo.Context) error {
 				entry.Status = "unknown"
 			}
 			entry.ConsecutiveFailures = src.ConsecutiveFailures
-			entry.Degraded = src.Degraded(successWindow, streakThreshold)
+			entry.Degraded = src.Degraded(health.DefaultSuccessWindow, health.DefaultStreakThreshold)
 			if !src.LastSuccessAt.IsZero() {
 				entry.LastSuccessAt = src.LastSuccessAt.UTC().Format(time.RFC3339)
 			}
 		} else {
-			// No tracker wired — treat as healthy to avoid false alarms in
-			// the legacy code paths (none today, but the field is optional).
 			entry.Status = "ok"
 		}
 		adapters = append(adapters, entry)

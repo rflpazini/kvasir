@@ -442,9 +442,14 @@ func TestHandler_HealthzReportsAdapters(t *testing.T) {
 	if first["name"] != "fake" {
 		t.Errorf("adapter name = %v, want fake", first["name"])
 	}
-	// Untouched tracker → degraded=true (never observed a success).
-	if first["degraded"] != true {
-		t.Errorf("untouched adapter degraded = %v, want true", first["degraded"])
+	// Untouched tracker → status=unknown, degraded=false (idle is NOT
+	// failing — degrading on never-observed produced false positives
+	// during server startup before any scrape had run).
+	if first["degraded"] != false {
+		t.Errorf("untouched adapter degraded = %v, want false (idle != failing)", first["degraded"])
+	}
+	if first["status"] != "unknown" {
+		t.Errorf("untouched adapter status = %v, want unknown", first["status"])
 	}
 }
 
