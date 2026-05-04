@@ -17,6 +17,11 @@
     const chipsHost     = document.getElementById("source-chips");
     const qualityHost   = document.getElementById("quality-chips");
     const initialNotice = document.getElementById("initial-notice");
+    const tabSearch     = document.getElementById("tab-search");
+    const tabRecent     = document.getElementById("tab-recent");
+    const heroSearch    = document.getElementById("hero-search");
+    const heroRecent    = document.getElementById("hero-recent");
+    const recentRefresh = document.getElementById("recent-refresh");
 
     const tplSkeleton = document.getElementById("tpl-skeleton");
     const tplCard     = document.getElementById("tpl-card");
@@ -36,6 +41,9 @@
 
     /** @type {string|null} latest query, used by retry. */
     let lastQuery = null;
+
+    /** @type {"search"|"recent"} active mode; toggled by the tab buttons. */
+    let mode = "search";
 
     /** @type {AbortController|null} cancels an in-flight search when a newer one fires. */
     let inflight = null;
@@ -116,9 +124,38 @@
                     activeQualities.add(q);
                     chip.setAttribute("aria-pressed", "true");
                 }
-                if (lastQuery) runSearch(lastQuery);
+                refireCurrent();
             });
         });
+    }
+
+    function refireCurrent() {
+        if (mode === "recent") {
+            runRecent();
+        } else if (lastQuery) {
+            runSearch(lastQuery);
+        }
+    }
+
+    function bindTabs() {
+        tabSearch.addEventListener("click", () => activate("search"));
+        tabRecent.addEventListener("click", () => activate("recent"));
+        if (recentRefresh) {
+            recentRefresh.addEventListener("click", () => runRecent());
+        }
+    }
+
+    function activate(target) {
+        if (target === mode) return;
+        mode = target;
+        const isRecent = target === "recent";
+        tabSearch.setAttribute("aria-selected", String(!isRecent));
+        tabRecent.setAttribute("aria-selected", String(isRecent));
+        heroSearch.hidden = isRecent;
+        heroRecent.hidden = !isRecent;
+        if (isRecent) {
+            runRecent();
+        }
     }
 
     function toggleSource(name, chip) {
@@ -138,19 +175,36 @@
     async function runSearch(query) {
         if (!query) return;
         lastQuery = query;
+        await runQuery(buildSearchUrl(query));
+    }
 
+    async function runRecent() {
+        await runQuery(buildRecentUrl());
+    }
+
+    function buildSearchUrl(query) {
+        const params = new URLSearchParams({ q: query, limit: "50" });
+        if (activeQualities.size > 0) {
+            params.set("quality", Array.from(activeQualities).join(","));
+        }
+        return `/api/search?${params.toString()}`;
+    }
+
+    function buildRecentUrl() {
+        const params = new URLSearchParams({ limit: "50" });
+        if (activeQualities.size > 0) {
+            params.set("quality", Array.from(activeQualities).join(","));
+        }
+        return `/api/recent?${params.toString()}`;
+    }
+
+    async function runQuery(url) {
         // cancel any prior request
         if (inflight) inflight.abort();
         inflight = new AbortController();
 
         showSkeleton();
         results.setAttribute("aria-busy", "true");
-
-        const params = new URLSearchParams({ q: query, limit: "50" });
-        if (activeQualities.size > 0) {
-            params.set("quality", Array.from(activeQualities).join(","));
-        }
-        const url = `/api/search?${params.toString()}`;
 
         try {
             const resp = await fetch(url, {
@@ -331,10 +385,12 @@
         event.preventDefault();
         const q = input.value.trim();
         if (!q) return;
+        if (mode !== "search") activate("search");
         runSearch(q);
     });
 
     bindShortcuts();
     bindQualityChips();
+    bindTabs();
     loadSources();
 })();

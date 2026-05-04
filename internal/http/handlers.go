@@ -18,11 +18,13 @@ import (
 )
 
 const (
-	cacheTTL          = 15 * time.Minute
-	defaultLimit      = 50
-	maxLimit          = 100
-	cacheKeyPrefix    = "search:v1:"
-	cacheLookupBudget = 200 * time.Millisecond
+	cacheTTL            = 15 * time.Minute
+	recentCacheTTL      = 5 * time.Minute
+	defaultLimit        = 50
+	maxLimit            = 100
+	cacheKeyPrefix      = "search:v1:"
+	recentCacheKey      = "recent:v1"
+	cacheLookupBudget   = 200 * time.Millisecond
 )
 
 type handlers struct {
@@ -81,6 +83,59 @@ func (h *handlers) search(c echo.Context) error {
 
 	resp.Results = applyLimit(model.FilterByQuality(resp.Results, qualities), limit)
 	return c.JSON(http.StatusOK, resp)
+}
+
+// recent returns the latest releases from every adapter. Same response
+// envelope as /api/search; the cache uses a fixed key (no query) and a
+// shorter TTL so stale releases do not linger. Quality filter still works.
+func (h *handlers) recent(c echo.Context) error {
+	limit := parseLimit(c.QueryParam("limit"))
+	qualities, droppedUnknown, droppedEmpty := parseQualityFilter(c.QueryParam("quality"))
+	if droppedUnknown > 0 {
+		h.deps.Logger.Warn("quality filter dropped unknown tokens", "raw", c.QueryParam("quality"), "count", droppedUnknown)
+		h.deps.Metrics.QualityFilterDropped.WithLabelValues("unknown").Add(float64(droppedUnknown))
+	}
+	if droppedEmpty > 0 {
+		h.deps.Metrics.QualityFilterDropped.WithLabelValues("empty").Add(float64(droppedEmpty))
+	}
+
+	ctx := c.Request().Context()
+
+	if h.deps.Cache != nil {
+		if cached, ok := h.lookupCache(ctx, recentCacheKey); ok {
+			h.deps.Metrics.CacheHits.Inc()
+			cached.Cached = true
+			cached.Results = applyLimit(model.FilterByQuality(cached.Results, qualities), limit)
+			return c.JSON(http.StatusOK, cached)
+		}
+		h.deps.Metrics.CacheMisses.Inc()
+	}
+
+	timer := time.Now()
+	resp := h.deps.Aggregator.Recent(ctx)
+	h.deps.Metrics.RequestDuration.Observe(time.Since(timer).Seconds())
+
+	if h.deps.Cache != nil {
+		h.storeRecentCache(ctx, resp)
+	}
+
+	resp.Results = applyLimit(model.FilterByQuality(resp.Results, qualities), limit)
+	return c.JSON(http.StatusOK, resp)
+}
+
+// storeRecentCache persists the full Recent payload with a shorter TTL.
+func (h *handlers) storeRecentCache(ctx context.Context, resp model.SearchResponse) {
+	resp.Cached = false
+	payload, err := json.Marshal(resp)
+	if err != nil {
+		h.deps.Logger.Warn("recent cache marshal failed", "err", err.Error())
+		return
+	}
+	storeCtx, cancel := context.WithTimeout(ctx, cacheLookupBudget)
+	defer cancel()
+	if err := h.deps.Cache.SetSearch(storeCtx, recentCacheKey, payload, recentCacheTTL); err != nil {
+		h.deps.Logger.Warn("recent cache store failed", "err", err.Error())
+	}
 }
 
 // lookupCache returns a fresh SearchResponse on every hit because the payload

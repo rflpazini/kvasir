@@ -56,6 +56,20 @@ func (c *Comando) Search(ctx context.Context, query string) ([]model.Result, err
 	return ParseComando(html)
 }
 
+// Recent implements Adapter — fetches the comando.la homepage via
+// FlareSolverr and parses the WordPress posts (same article structure
+// used by Search, so ParseComando handles both inputs).
+func (c *Comando) Recent(ctx context.Context) ([]model.Result, error) {
+	if c.solver == nil {
+		return nil, fmt.Errorf("comando: no flaresolverr configured")
+	}
+	html, err := c.solver.Fetch(ctx, comandoBaseURL+"/", 60_000)
+	if err != nil {
+		return nil, fmt.Errorf("comando: fetch home via flaresolverr: %w", err)
+	}
+	return ParseComando(html)
+}
+
 // HealthCheck implements Adapter. Cheap probe through FlareSolverr to verify
 // CF challenge is solvable end-to-end.
 func (c *Comando) HealthCheck(ctx context.Context) error {

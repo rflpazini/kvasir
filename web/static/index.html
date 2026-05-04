@@ -7,7 +7,7 @@
     <meta name="theme-color" content="#0c1014">
     <title>Kvasir</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 24'><path d='M2 2 L2 22 M2 12 L11 5 M2 12 L11 19' stroke='%23d4a24c' stroke-width='2.2' fill='none' stroke-linecap='square'/></svg>">
-    <link rel="stylesheet" href="/styles.css?v=qf1">
+    <link rel="stylesheet" href="/styles.css?v=rl1">
 </head>
 <body>
     <div class="shell">
@@ -20,11 +20,14 @@
                 </svg>
                 <h1 class="brand__wordmark">Kvasir</h1>
             </a>
-            <p class="masthead__tag">Stack privada · LAN apenas</p>
+            <nav class="tabs" role="tablist" aria-label="Modo de consulta">
+                <button class="tab" id="tab-search" type="button" role="tab" aria-selected="true">Busca</button>
+                <button class="tab" id="tab-recent" type="button" role="tab" aria-selected="false">Lançamentos</button>
+            </nav>
         </header>
 
         <!-- hero / search -->
-        <section class="hero" aria-label="Consulta">
+        <section class="hero" aria-label="Consulta" id="hero-search">
             <p class="hero__lede">
                 Agregador doméstico de fontes em paralelo.
                 <em>Pergunte qualquer coisa</em>; Kvasir consulta as fontes registradas e devolve o que cada uma viu.
@@ -52,6 +55,14 @@
                 <span class="kbd">esc</span>
                 <span>limpa</span>
             </div>
+        </section>
+
+        <section class="hero hero--recent" aria-label="Lançamentos" id="hero-recent" hidden>
+            <p class="hero__lede">
+                Últimos itens publicados pelas fontes registradas.
+                Atualiza a cada cinco minutos no cache; recarregue pra forçar.
+            </p>
+            <button class="search__submit" type="button" id="recent-refresh">Recarregar lançamentos</button>
         </section>
 
         <!-- source filters -->
@@ -155,6 +166,6 @@
         </div>
     </template>
 
-    <script src="/app.js?v=qf1" defer></script>
+    <script src="/app.js?v=rl1" defer></script>
 </body>
 </html>

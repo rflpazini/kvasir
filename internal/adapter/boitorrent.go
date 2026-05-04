@@ -87,6 +87,33 @@ func (b *Boitorrent) Search(ctx context.Context, query string) ([]model.Result, 
 	return ParseBoitorrent(body)
 }
 
+// Recent implements Adapter — fetches the homepage and parses the
+// "ÚLTIMOS LANÇAMENTOS" listing into normalized Results.
+func (b *Boitorrent) Recent(ctx context.Context) ([]model.Result, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, boitorrentBaseURL+"/", nil)
+	if err != nil {
+		return nil, fmt.Errorf("boitorrent: build request: %w", err)
+	}
+	req.Header.Set("User-Agent", boitorrentUA)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9")
+	req.Header.Set("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
+
+	resp, err := b.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("boitorrent: http error: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("boitorrent: unexpected status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("boitorrent: read body: %w", err)
+	}
+	return ParseBoitorrentHome(body)
+}
+
 // HealthCheck implements Adapter. Cheap HEAD probe on the homepage.
 func (b *Boitorrent) HealthCheck(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, boitorrentBaseURL+"/", nil)
@@ -104,6 +131,38 @@ func (b *Boitorrent) HealthCheck(ctx context.Context) error {
 		return fmt.Errorf("boitorrent: healthcheck status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// ParseBoitorrentHome extracts the latest releases from the boitorrent
+// homepage. The site renders each item as a `<li class="capa_lista">`
+// containing an `<a>` to the detail page and an `<h2>` with the title.
+// Quality is parsed from the title via model.ParseQuality.
+func ParseBoitorrentHome(htmlBytes []byte) ([]model.Result, error) {
+	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(htmlBytes))
+	if err != nil {
+		return nil, fmt.Errorf("boitorrent: parse home html: %w", err)
+	}
+
+	var out []model.Result
+	doc.Find("li.capa_lista").Each(func(_ int, s *goquery.Selection) {
+		anchor := s.Find("a[href]").First()
+		href, _ := anchor.Attr("href")
+		title := strings.TrimSpace(anchor.Find("h2").First().Text())
+		if title == "" || href == "" {
+			return
+		}
+		// The homepage title rarely carries resolution markers (those live
+		// in a sibling badge `<div class="qualidade_capa">FULLHD</div>`),
+		// so concat both before parsing for the quality bucket.
+		qualityHint := strings.TrimSpace(s.Find("div.qualidade_capa").First().Text())
+		out = append(out, model.Result{
+			Title:     title,
+			Source:    boitorrentName,
+			Quality:   model.ParseQuality(title + " " + qualityHint),
+			DetailURL: href,
+		})
+	})
+	return out, nil
 }
 
 // ParseBoitorrent extracts normalized results from a search-page HTML payload.

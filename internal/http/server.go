@@ -51,6 +51,7 @@ func NewServer(cfg Config, deps Deps) *echo.Echo {
 
 	e.GET("/healthz", h.health)
 	e.GET("/api/search", h.search)
+	e.GET("/api/recent", h.recent)
 	e.GET("/metrics", echo.WrapHandler(promhttp.HandlerFor(deps.PromGather, promhttp.HandlerOpts{})))
 
 	if cfg.StaticDir != "" {

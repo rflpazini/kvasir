@@ -23,6 +23,12 @@ type Adapter interface {
 	// ctx.Err() on cancellation.
 	Search(ctx context.Context, query string) ([]model.Result, error)
 
+	// Recent returns the latest releases from the site, no query needed.
+	// Used by the "Lançamentos" view. Like Search, must respect ctx.
+	// Implementations source from RSS when available, falling back to the
+	// site homepage HTML.
+	Recent(ctx context.Context) ([]model.Result, error)
+
 	// HealthCheck performs a cheap probe (typically a HEAD on the homepage)
 	// and reports whether the site is reachable. Used by /healthz.
 	HealthCheck(ctx context.Context) error
