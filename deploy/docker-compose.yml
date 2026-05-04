@@ -25,6 +25,10 @@ services:
       FLARESOLVERR_URL: http://flaresolverr:8191/v1
       LOG_LEVEL: info
       ENABLE_DEBUG_ENDPOINTS: "false"
+    # Host port published so Homepage's siteMonitor and any LAN diagnostic
+    # tooling can reach the binary directly without going through Traefik.
+    ports:
+      - "8101:8080"
     volumes:
       - /appdata/kvasir/logs:/logs
     networks:
