@@ -54,6 +54,48 @@ func registry(t *testing.T, adapters ...adapter.Adapter) *adapter.Registry {
 	return r
 }
 
+// TestAggregator_FanOutResultsAreDeterministic verifies merged results
+// always come back in the same order regardless of which adapter happens
+// to finish first. Adapters are sorted by Name; within a source the
+// adapter's own order is preserved.
+func TestAggregator_FanOutResultsAreDeterministic(t *testing.T) {
+	bSlow := &fakeAdapter{name: "b", delay: 80 * time.Millisecond, results: []model.Result{
+		{Title: "B1", Source: "b"}, {Title: "B2", Source: "b"},
+	}}
+	aFast := &fakeAdapter{name: "a", results: []model.Result{
+		{Title: "A1", Source: "a"}, {Title: "A2", Source: "a"},
+	}}
+	cMid := &fakeAdapter{name: "c", delay: 30 * time.Millisecond, results: []model.Result{
+		{Title: "C1", Source: "c"},
+	}}
+
+	agg := aggregator.New(registry(t, bSlow, aFast, cMid), 1*time.Second)
+
+	want := []string{"A1", "A2", "B1", "B2", "C1"}
+	for i := 0; i < 5; i++ {
+		resp := agg.Search(context.Background(), "x")
+		got := make([]string, 0, len(resp.Results))
+		for _, r := range resp.Results {
+			got = append(got, r.Title)
+		}
+		if !equalStrings(got, want) {
+			t.Errorf("run %d order = %v, want %v", i, got, want)
+		}
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestAggregator_Recent_FanOut(t *testing.T) {
 	a := &fakeAdapter{name: "a", results: []model.Result{{Title: "A1", Source: "a"}}}
 	b := &fakeAdapter{name: "b", results: []model.Result{{Title: "B1", Source: "b"}, {Title: "B2", Source: "b"}}}

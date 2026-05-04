@@ -76,7 +76,6 @@ func run() error {
 	agg := aggregator.New(registry, 30*time.Second)
 
 	srv := apphttp.NewServer(apphttp.Config{
-		Address:              getenv("LISTEN_ADDR", ":8080"),
 		StaticDir:            getenv("STATIC_DIR", "web/static"),
 		EnableDebugEndpoints: apphttp.EnableDebugFromEnv(),
 	}, apphttp.Deps{

@@ -9,6 +9,7 @@ package aggregator
 import (
 	"context"
 	"errors"
+	"sort"
 	"sync"
 	"time"
 
@@ -97,6 +98,15 @@ func (a *Aggregator) fanOut(ctx context.Context, op func(context.Context, adapte
 		})
 	}
 	_ = g.Wait()
+
+	// Stable order — adapters race to completion, so the goroutine append
+	// order would otherwise scramble the response. Sort by source name and
+	// preserve each adapter's internal order for the same query so two
+	// identical requests return byte-equal payloads (cache observability +
+	// reproducible test fixtures).
+	sort.SliceStable(results, func(i, j int) bool {
+		return results[i].Source < results[j].Source
+	})
 
 	return model.SearchResponse{
 		Results:     results,

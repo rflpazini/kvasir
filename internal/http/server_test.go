@@ -383,6 +383,44 @@ func TestHandler_RecentReturnsAggregate(t *testing.T) {
 	})
 }
 
+// TestHandler_SearchLimitNeverPanicsAboveResultCount guards against a
+// regression where applyLimit would blindly slice results[:limit]; with
+// limit > len(results) that path panics. Default limit (50) hitting a
+// 7-result fixture covers the hot path; explicit ?limit=100 covers the
+// case where a thoughtful client over-asks.
+func TestHandler_SearchLimitNeverPanicsAboveResultCount(t *testing.T) {
+	results := make([]model.Result, 0, 7)
+	for i := 0; i < 7; i++ {
+		results = append(results, model.Result{Title: "x", Source: "fake", DetailURL: "https://x"})
+	}
+	h := newHarness(t, false, results, nil)
+
+	rec, body := h.do(t, stdhttp.MethodGet, "/api/search?q=q&limit=100")
+	if rec.Code != stdhttp.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := len(body["results"].([]any)); got != 7 {
+		t.Errorf("limit=100 over 7 results returned %d, want 7", got)
+	}
+}
+
+// TestHandler_SearchQualityFilterDedupes locks the dedup branch in
+// parseQualityFilter — duplicate tokens must collapse, not produce
+// double-filter behavior or duplicated results.
+func TestHandler_SearchQualityFilterDedupes(t *testing.T) {
+	results := []model.Result{
+		{Title: "A 4K", Source: "fake", Quality: model.Quality4K, DetailURL: "https://x/a"},
+		{Title: "B 1080p", Source: "fake", Quality: model.Quality1080p, DetailURL: "https://x/b"},
+	}
+	h := newHarness(t, false, results, nil)
+
+	_, body := h.do(t, stdhttp.MethodGet, "/api/search?q=q&quality=4k,4K,4k,1080p,1080P")
+	got := body["results"].([]any)
+	if len(got) != 2 {
+		t.Errorf("expected 2 results (4K + 1080p, deduped), got %d", len(got))
+	}
+}
+
 func TestHandler_HealthzReportsAdapters(t *testing.T) {
 	h := newHarness(t, false, nil, nil)
 	rec, body := h.do(t, stdhttp.MethodGet, "/healthz")

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -111,6 +112,14 @@ func (c *Client) Fetch(ctx context.Context, url string, maxTimeoutMs int) ([]byt
 		return nil, fmt.Errorf("flaresolverr: decode: %w", err)
 	}
 	if out.Status != "ok" {
+		// FlareSolverr drops sessions server-side when the headless browser
+		// context expires; without invalidating our cached ID we'd loop on
+		// the same dead session until the process restarts. Detect by
+		// "session" appearing in the message and clear so the next Fetch
+		// re-creates a fresh one.
+		if strings.Contains(strings.ToLower(out.Message), "session") {
+			c.invalidateSession(session)
+		}
 		return nil, fmt.Errorf("flaresolverr: %s: %s", out.Status, out.Message)
 	}
 	if out.Solution.Status >= 400 {
@@ -182,6 +191,20 @@ func (c *Client) ensureSession(ctx context.Context) (string, error) {
 	}
 	c.session = out.Session
 	return c.session, nil
+}
+
+// invalidateSession drops the cached session ID, but only if it still
+// matches `id` — guards against a concurrent caller having already
+// rotated the session before we noticed it was stale.
+func (c *Client) invalidateSession(id string) {
+	if id == "" {
+		return
+	}
+	c.mu.Lock()
+	if c.session == id {
+		c.session = ""
+	}
+	c.mu.Unlock()
 }
 
 // CloseSession destroys the cached session on the FlareSolverr side. Best-effort.

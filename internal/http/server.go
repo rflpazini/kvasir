@@ -18,9 +18,10 @@ import (
 	"github.com/rflpazini/kvasir/internal/observability"
 )
 
-// Config carries the HTTP layer configuration.
+// Config carries the HTTP layer configuration. The listen address is
+// passed to e.Start() in main.go and intentionally not stored here so
+// there is one source of truth.
 type Config struct {
-	Address              string
 	StaticDir            string
 	EnableDebugEndpoints bool
 }
