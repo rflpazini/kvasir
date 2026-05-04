@@ -151,9 +151,18 @@ func TestParseTorrentDosFilmesFeed_PostersExtracted(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 	withPoster := 0
-	for _, r := range results {
-		if r.PosterURL != "" {
-			withPoster++
+	for i, r := range results {
+		if r.PosterURL == "" {
+			continue
+		}
+		withPoster++
+		// Locks the namespace tag against silently breaking. If the
+		// xml:"http://search.yahoo.com/mrss/ content" tuple ever stops
+		// matching what WordPress emits, PosterURL would either be empty
+		// (caught by the count check below) or some non-URL stray value;
+		// the prefix check rules out the latter.
+		if !strings.HasPrefix(r.PosterURL, "https://") && !strings.HasPrefix(r.PosterURL, "http://") {
+			t.Errorf("results[%d].PosterURL %q is not an absolute URL", i, r.PosterURL)
 		}
 	}
 	// WordPress feeds with featured images carry <media:content url="..."/>
