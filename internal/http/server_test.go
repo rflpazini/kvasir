@@ -307,6 +307,17 @@ func TestHandler_SearchAdapterErrorRecordedInSourceStats(t *testing.T) {
 	}
 }
 
+func TestServer_SetsNoEdgeCacheHeader(t *testing.T) {
+	// Every response must carry Cache-Control so CF (or any intermediary)
+	// does not serve stale assets after a redeploy. healthz is convenient
+	// because it does not return a body that masks the header.
+	h := newHarness(t, false, nil, nil)
+	rec, _ := h.do(t, stdhttp.MethodGet, "/healthz")
+	if got := rec.Header().Get("Cache-Control"); !strings.Contains(got, "no-cache") {
+		t.Errorf("Cache-Control = %q, want no-cache", got)
+	}
+}
+
 func TestHandler_HealthzReportsAdapters(t *testing.T) {
 	h := newHarness(t, false, nil, nil)
 	rec, body := h.do(t, stdhttp.MethodGet, "/healthz")

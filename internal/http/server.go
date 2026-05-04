@@ -44,6 +44,7 @@ func NewServer(cfg Config, deps Deps) *echo.Echo {
 
 	e.Use(middleware.RequestID())
 	e.Use(middleware.Recover())
+	e.Use(noEdgeCacheMiddleware())
 	e.Use(slogRequestLogger(deps.Logger))
 
 	h := newHandlers(deps)
@@ -62,6 +63,28 @@ func NewServer(cfg Config, deps Deps) *echo.Echo {
 	}
 
 	return e
+}
+
+// noEdgeCacheMiddleware tells Cloudflare (and any other intermediary cache)
+// not to serve stale responses. Without an explicit Cache-Control header,
+// CF applies its own 4h default to static assets like /app.js — fine in
+// theory, painful in practice when a homelab redeploys faster than that
+// and users see a stale frontend bundle until the TTL elapses.
+//
+// `no-cache, must-revalidate` lets the browser keep the asset locally but
+// forces a revalidation roundtrip on every load. Single-user homelab,
+// edge cache savings here are worth less than predictable deploys.
+func noEdgeCacheMiddleware() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			c.Response().Before(func() {
+				if c.Response().Header().Get("Cache-Control") == "" {
+					c.Response().Header().Set("Cache-Control", "no-cache, must-revalidate")
+				}
+			})
+			return next(c)
+		}
+	}
 }
 
 // slogRequestLogger emits a structured log line per HTTP request.
