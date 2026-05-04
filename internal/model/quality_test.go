@@ -44,6 +44,12 @@ func TestParseQuality(t *testing.T) {
 		{"Year 2160 BC", model.QualityOther},
 		// Words containing the substrings should not match (word-boundary check).
 		{"x1080pluskick", model.QualityOther},
+
+		// "4Kids" must not trigger 4K (the K is followed by alpha, no boundary).
+		{"Movie 4Kids Show", model.QualityOther},
+
+		// Diacritics in the title must not break word boundaries around 1080p.
+		{"Filme 1080p Dublado Português", model.Quality1080p},
 	}
 
 	for _, tc := range cases {
@@ -83,6 +89,7 @@ func TestQualityFromString(t *testing.T) {
 		{"other", model.QualityOther, true},
 		{"720p", "", false},
 		{"", "", false},
+		{"   ", "", false}, // whitespace-only must not match
 	}
 
 	for _, tc := range cases {

@@ -13,6 +13,7 @@ type Metrics struct {
 	RequestDuration      prometheus.Histogram
 	ConsecutiveFailures  *prometheus.GaugeVec
 	RetryAttempts        *prometheus.CounterVec
+	QualityFilterDropped *prometheus.CounterVec
 }
 
 // NewMetrics constructs and registers every collector in the kvasir namespace.
@@ -68,6 +69,16 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name:      "retry_attempts_total",
 			Help:      "Number of retry attempts performed per adapter.",
 		}, []string{"adapter"}),
+
+		// Bumped when the ?quality= filter contains a token we don't recognize
+		// (typo, dropped Quality bucket, malformed URL with empty parts).
+		// Reason label distinguishes "unknown" from "empty" so a mis-encoded
+		// querystring surfaces separately from a typo.
+		QualityFilterDropped: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: "kvasir",
+			Name:      "quality_filter_dropped_total",
+			Help:      "Tokens dropped from ?quality= because they were not recognized or were empty.",
+		}, []string{"reason"}),
 	}
 
 	reg.MustRegister(
@@ -79,6 +90,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		m.RequestDuration,
 		m.ConsecutiveFailures,
 		m.RetryAttempts,
+		m.QualityFilterDropped,
 	)
 
 	return m

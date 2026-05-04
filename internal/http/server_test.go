@@ -256,6 +256,38 @@ func TestHandler_SearchQualityFilter(t *testing.T) {
 			t.Errorf("full-set call after filter expected 4, got %d (cache leaked filter)", got)
 		}
 	})
+
+	t.Run("unknown and empty tokens bump dropped counter", func(t *testing.T) {
+		h := newHarness(t, false, results, nil)
+
+		// Mix of unknown ("720p") and empty (",,") tokens. 4k is recognized so
+		// the request still succeeds with a valid filter applied.
+		_, body := h.do(t, stdhttp.MethodGet, "/api/search?q=drift&quality=720p,,4k,")
+		if rec := body["results"].([]any); len(rec) != 2 {
+			t.Errorf("expected 2 (4K) results, got %d", len(rec))
+		}
+
+		// /metrics must expose both reasons with the right counts.
+		rec, _ := h.do(t, stdhttp.MethodGet, "/metrics")
+		out := rec.Body.String()
+		if !strings.Contains(out, `kvasir_quality_filter_dropped_total{reason="unknown"} 1`) {
+			t.Errorf("expected unknown=1 in metrics, got:\n%s", excerpt(out, "quality_filter_dropped"))
+		}
+		if !strings.Contains(out, `kvasir_quality_filter_dropped_total{reason="empty"} 2`) {
+			t.Errorf("expected empty=2 in metrics, got:\n%s", excerpt(out, "quality_filter_dropped"))
+		}
+	})
+}
+
+// excerpt returns lines from out containing needle, for friendlier failure messages.
+func excerpt(out, needle string) string {
+	var lines []string
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, needle) {
+			lines = append(lines, l)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func TestHandler_SearchAdapterErrorRecordedInSourceStats(t *testing.T) {
