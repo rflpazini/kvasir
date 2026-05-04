@@ -33,16 +33,18 @@ OUT_FILE="${OUT_DIR}/search_${SLUG}.html"
 
 UA="${USER_AGENT:-Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36}"
 
-# Per-adapter URL templates. Add new adapters here.
-declare -A URL_TEMPLATES=(
-    [boitorrent]="https://boitorrent.com/?s=%s"
-    [comando]="https://comando.la/?s=%s"
-)
-
-template="${SEARCH_URL_TEMPLATE:-${URL_TEMPLATES[$ADAPTER]:-}}"
+# Per-adapter URL templates. Add new adapters via the case statement below.
+# Using case instead of associative arrays so this runs on macOS bash 3.2.
+template="${SEARCH_URL_TEMPLATE:-}"
 if [[ -z "$template" ]]; then
-    echo "fatal: no URL template for adapter '$ADAPTER'. Add it to URL_TEMPLATES or pass SEARCH_URL_TEMPLATE." >&2
-    exit 1
+    case "$ADAPTER" in
+        boitorrent) template="https://boitorrent.com/index.php?campo1=%s&nome_campo1=pesquisa&categoria=lista" ;;
+        comando)    template="https://comando.la/?s=%s" ;;
+        *)
+            echo "fatal: no URL template for adapter '$ADAPTER'. Pass SEARCH_URL_TEMPLATE or add a case." >&2
+            exit 1
+            ;;
+    esac
 fi
 
 # urlencode the query before substituting into the template.

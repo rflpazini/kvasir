@@ -13,6 +13,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/rflpazini/kvasir/internal/adapter"
+	"github.com/rflpazini/kvasir/internal/aggregator"
+	"github.com/rflpazini/kvasir/internal/cache"
 	"github.com/rflpazini/kvasir/internal/observability"
 )
 
@@ -28,6 +30,8 @@ type Deps struct {
 	Logger     *slog.Logger
 	Metrics    *observability.Metrics
 	Registry   *adapter.Registry
+	Aggregator *aggregator.Aggregator
+	Cache      *cache.Client
 	PromGather prometheus.Gatherer
 }
 

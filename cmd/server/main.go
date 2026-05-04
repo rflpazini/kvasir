@@ -12,6 +12,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/rflpazini/kvasir/internal/adapter"
+	"github.com/rflpazini/kvasir/internal/aggregator"
+	"github.com/rflpazini/kvasir/internal/cache"
 	apphttp "github.com/rflpazini/kvasir/internal/http"
 	"github.com/rflpazini/kvasir/internal/observability"
 )
@@ -35,8 +37,22 @@ func run() error {
 	metrics := observability.NewMetrics(reg)
 
 	registry := adapter.NewRegistry()
-	// Adapters are registered here in Phase 1+:
-	// registry.Register(boitorrent.New(...))
+	registry.Register(adapter.NewBoitorrent(nil))
+
+	var cacheClient *cache.Client
+	if addr := os.Getenv("REDIS_ADDR"); addr != "" {
+		cacheClient = cache.New(cache.Config{Addr: addr})
+		pingCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		if err := cacheClient.Ping(pingCtx); err != nil {
+			logger.Warn("redis unavailable, running without cache", "addr", addr, "err", err.Error())
+			cacheClient = nil
+		}
+		cancel()
+	} else {
+		logger.Warn("REDIS_ADDR not set, running without cache")
+	}
+
+	agg := aggregator.New(registry, 8*time.Second)
 
 	srv := apphttp.NewServer(apphttp.Config{
 		Address:              getenv("LISTEN_ADDR", ":8080"),
@@ -46,6 +62,8 @@ func run() error {
 		Logger:     logger,
 		Metrics:    metrics,
 		Registry:   registry,
+		Aggregator: agg,
+		Cache:      cacheClient,
 		PromGather: reg,
 	})
 

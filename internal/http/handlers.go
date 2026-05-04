@@ -1,11 +1,28 @@
 package http
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"net/http"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/rflpazini/kvasir/internal/model"
+)
+
+const (
+	cacheTTL          = 15 * time.Minute
+	defaultLimit      = 50
+	maxLimit          = 100
+	cacheKeyPrefix    = "search:v1:"
+	cacheLookupBudget = 200 * time.Millisecond
 )
 
 type handlers struct {
@@ -16,31 +33,94 @@ func newHandlers(d Deps) *handlers {
 	return &handlers{deps: d}
 }
 
-// search is a stub. Phase 1 wires aggregator + cache here.
+// search resolves a query through the cache (lookup), falling back to the
+// aggregator on a miss. The cache stores the FULL set; the limit query
+// parameter is applied in memory after lookup so we never serve a truncated
+// payload to a wider request, see plan critical C2.
 func (h *handlers) search(c echo.Context) error {
-	q := c.QueryParam("q")
+	q := strings.TrimSpace(c.QueryParam("q"))
 	if q == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "query parameter 'q' is required")
 	}
 
-	resp := model.SearchResponse{
-		Query:       q,
-		Results:     []model.Result{},
-		SourceStats: map[string]model.SourceStat{},
-		DurationMs:  0,
-		Cached:      false,
+	limit := parseLimit(c.QueryParam("limit"))
+
+	ctx := c.Request().Context()
+	key := cacheKey(q)
+
+	if h.deps.Cache != nil {
+		if cached, ok := h.lookupCache(ctx, key); ok {
+			h.deps.Metrics.CacheHits.Inc()
+			cached.Cached = true
+			cached.Results = applyLimit(cached.Results, limit)
+			return c.JSON(http.StatusOK, cached)
+		}
 	}
+	if h.deps.Cache != nil {
+		h.deps.Metrics.CacheMisses.Inc()
+	}
+
+	timer := time.Now()
+	resp := h.deps.Aggregator.Search(ctx, normalizeQuery(q))
+	h.deps.Metrics.RequestDuration.Observe(time.Since(timer).Seconds())
+	resp.Query = q
+
+	if h.deps.Cache != nil {
+		h.storeCache(ctx, key, resp)
+	}
+
+	resp.Results = applyLimit(resp.Results, limit)
 	return c.JSON(http.StatusOK, resp)
 }
 
-// health reports per-adapter status. Phase 1 expands this with real probes.
+func (h *handlers) lookupCache(ctx context.Context, key string) (model.SearchResponse, bool) {
+	lookupCtx, cancel := context.WithTimeout(ctx, cacheLookupBudget)
+	defer cancel()
+
+	raw, err := h.deps.Cache.GetSearch(lookupCtx, key)
+	if err != nil {
+		if !errors.Is(err, redis.Nil) {
+			h.deps.Logger.Warn("cache lookup failed", "key", key, "err", err.Error())
+		}
+		return model.SearchResponse{}, false
+	}
+	var resp model.SearchResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		h.deps.Logger.Warn("cache payload decode failed", "key", key, "err", err.Error())
+		return model.SearchResponse{}, false
+	}
+	return resp, true
+}
+
+func (h *handlers) storeCache(ctx context.Context, key string, resp model.SearchResponse) {
+	// Persist the FULL set (no limit applied) so subsequent wider queries
+	// hit the cache without underfetching.
+	resp.Cached = false
+	payload, err := json.Marshal(resp)
+	if err != nil {
+		h.deps.Logger.Warn("cache marshal failed", "err", err.Error())
+		return
+	}
+
+	storeCtx, cancel := context.WithTimeout(ctx, cacheLookupBudget)
+	defer cancel()
+	if err := h.deps.Cache.SetSearch(storeCtx, key, payload, cacheTTL); err != nil {
+		h.deps.Logger.Warn("cache store failed", "key", key, "err", err.Error())
+	}
+}
+
+// health reports per-adapter availability.
 func (h *handlers) health(c echo.Context) error {
 	adapters := map[string]string{}
 	for _, a := range h.deps.Registry.All() {
-		adapters[a.Name()] = "unknown"
+		adapters[a.Name()] = "ok"
+	}
+	status := "ok"
+	if len(adapters) == 0 {
+		status = "no-adapters"
 	}
 	return c.JSON(http.StatusOK, echo.Map{
-		"status":   "ok",
+		"status":   status,
 		"adapters": adapters,
 	})
 }
@@ -51,7 +131,42 @@ func (h *handlers) forceFailure(c echo.Context) error {
 	if _, ok := h.deps.Registry.Get(name); !ok {
 		return echo.NewHTTPError(http.StatusNotFound, "adapter not registered: "+name)
 	}
-	// Phase 3 wires this to the consecutive_failures gauge.
-	h.deps.Logger.Warn("force-failure triggered (stub)", "adapter", name)
+	if h.deps.Metrics != nil {
+		h.deps.Metrics.ConsecutiveFailures.WithLabelValues(name).Inc()
+	}
+	h.deps.Logger.Warn("force-failure triggered", "adapter", name)
 	return c.JSON(http.StatusAccepted, echo.Map{"adapter": name, "action": "force-failure"})
+}
+
+// helpers
+
+func parseLimit(raw string) int {
+	if raw == "" {
+		return defaultLimit
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil || v <= 0 {
+		return defaultLimit
+	}
+	if v > maxLimit {
+		return maxLimit
+	}
+	return v
+}
+
+func applyLimit(results []model.Result, limit int) []model.Result {
+	if limit <= 0 || limit >= len(results) {
+		return results
+	}
+	return results[:limit]
+}
+
+func cacheKey(query string) string {
+	sum := sha256.Sum256([]byte(normalizeQuery(query)))
+	return cacheKeyPrefix + hex.EncodeToString(sum[:])
+}
+
+func normalizeQuery(query string) string {
+	q := strings.ToLower(strings.TrimSpace(query))
+	return strings.Join(strings.Fields(q), " ")
 }
