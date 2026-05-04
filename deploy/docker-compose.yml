@@ -60,7 +60,7 @@ services:
       retries: 5
 
   flaresolverr:
-    image: ghcr.io/flaresolverr/flaresolverr:latest
+    image: flaresolverr/flaresolverr:latest
     container_name: kvasir-flaresolverr
     restart: unless-stopped
     environment:

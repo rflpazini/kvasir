@@ -14,6 +14,7 @@ import (
 	"github.com/rflpazini/kvasir/internal/adapter"
 	"github.com/rflpazini/kvasir/internal/aggregator"
 	"github.com/rflpazini/kvasir/internal/cache"
+	"github.com/rflpazini/kvasir/internal/flaresolverr"
 	apphttp "github.com/rflpazini/kvasir/internal/http"
 	"github.com/rflpazini/kvasir/internal/observability"
 )
@@ -38,6 +39,22 @@ func run() error {
 
 	registry := adapter.NewRegistry()
 	registry.Register(adapter.NewBoitorrent(nil))
+	registry.Register(adapter.NewTorrentDosFilmes(nil))
+
+	if fsURL := os.Getenv("FLARESOLVERR_URL"); fsURL != "" {
+		solver := flaresolverr.New(fsURL, nil)
+		probeCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		if err := solver.Health(probeCtx); err != nil {
+			logger.Warn("flaresolverr unreachable, comando adapter disabled",
+				"url", fsURL, "err", err.Error())
+		} else {
+			registry.Register(adapter.NewComando(solver))
+			logger.Info("flaresolverr ok, comando adapter registered", "url", fsURL)
+		}
+		cancel()
+	} else {
+		logger.Warn("FLARESOLVERR_URL not set, comando adapter disabled")
+	}
 
 	var cacheClient *cache.Client
 	if addr := os.Getenv("REDIS_ADDR"); addr != "" {
@@ -52,7 +69,11 @@ func run() error {
 		logger.Warn("REDIS_ADDR not set, running without cache")
 	}
 
-	agg := aggregator.New(registry, 8*time.Second)
+	// Per-adapter timeout: bumped to 30s because FlareSolverr cold-solves of
+	// Cloudflare-fronted sites (eg comando.la) routinely take 15–25s on the
+	// first request after a session expiry. Direct-HTTP adapters return well
+	// within 2s, so the higher ceiling does not affect the warm path.
+	agg := aggregator.New(registry, 30*time.Second)
 
 	srv := apphttp.NewServer(apphttp.Config{
 		Address:              getenv("LISTEN_ADDR", ":8080"),
