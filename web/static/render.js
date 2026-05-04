@@ -133,12 +133,12 @@ export function showSkeleton(rootEl, tpl) {
 
 /**
  * Render the search-response payload into `rootEl`.
- *  - `activeSources` filters cards client-side by source
- *  - `tplCard` / `tplEmpty` are the cloneable templates
- *  - `onCopyMagnet` wires the per-card magnet button
- *  - `fallbackQuery` is shown in the empty state when payload.query is missing
+ * `ctx` carries the templates, source filter, magnet callback, and the
+ * fallback query for the empty state. Bag-of-args at the call site keeps
+ * positional ordering off the cognitive critical path.
  */
-export function renderResults(rootEl, data, activeSources, tplCard, tplEmpty, onCopyMagnet, fallbackQuery) {
+export function renderResults(rootEl, data, ctx) {
+    const { activeSources, tplCard, tplEmpty, onCopyMagnet, fallbackQuery } = ctx;
     clearChildren(rootEl);
 
     const filtered = (data.results || []).filter((r) => activeSources.has(r.source));

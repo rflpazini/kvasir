@@ -3,14 +3,14 @@
 // api.js (URL building / fetch) and render.js (DOM helpers / templates);
 // this module owns the mutable session state and dispatches between them.
 
-import { fetchJSON, loadAdapters, recentURL, searchURL } from "/api.js?v=mod1";
+import { fetchJSON, loadAdapters, recentURL, searchURL } from "/api.js";
 import {
     renderError,
     renderResults,
     renderSourceChips,
     renderStats,
     showSkeleton,
-} from "/render.js?v=mod1";
+} from "/render.js";
 
 // ---- DOM refs --------------------------------------------------------------
 
@@ -82,9 +82,17 @@ async function runQuery(url) {
 
 function paint(data) {
     renderStats(statsRefs, data);
-    renderResults(results, data, activeSources, tplCard, tplEmpty, copyMagnet, lastQuery);
+    renderResults(results, data, {
+        activeSources,
+        tplCard,
+        tplEmpty,
+        onCopyMagnet: copyMagnet,
+        fallbackQuery: lastQuery,
+    });
 }
 
+// retry intentionally re-reads module-level `mode` and `lastQuery` at
+// click time. Don't snapshot them as args — the user can tab + retry.
 function retry() {
     if (mode === "recent") runRecent();
     else if (lastQuery) runSearch(lastQuery);
