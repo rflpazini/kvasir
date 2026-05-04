@@ -158,12 +158,20 @@ func ParseTorrentDosFilmes(htmlBytes []byte) ([]model.Result, error) {
 }
 
 // rssChannel is the minimal subset of WordPress RSS 2.0 we care about.
+// `media:content` lives in the http://search.yahoo.com/mrss/ namespace;
+// Go's encoding/xml treats it as the local name "content" with that
+// namespace, but in practice WordPress emits the prefixed form so the
+// "media content" tuple in the struct tag matches.
 type rssChannel struct {
 	XMLName xml.Name `xml:"rss"`
 	Items   []struct {
 		Title   string `xml:"title"`
 		Link    string `xml:"link"`
 		PubDate string `xml:"pubDate"`
+		Media   []struct {
+			URL    string `xml:"url,attr"`
+			Medium string `xml:"medium,attr"`
+		} `xml:"http://search.yahoo.com/mrss/ content"`
 	} `xml:"channel>item"`
 }
 
@@ -187,6 +195,17 @@ func ParseTorrentDosFilmesFeed(xmlBytes []byte) ([]model.Result, error) {
 			Source:    tdfName,
 			Quality:   model.ParseQuality(title),
 			DetailURL: link,
+		}
+		// First image-type media:content entry wins. WordPress sometimes
+		// emits multiple (thumbnail + full size); prefer the first.
+		for _, m := range it.Media {
+			if m.URL == "" {
+				continue
+			}
+			if m.Medium == "" || m.Medium == "image" {
+				r.PosterURL = m.URL
+				break
+			}
 		}
 		if t, err := parseRSSDate(it.PubDate); err == nil {
 			r.PublishedAt = &t

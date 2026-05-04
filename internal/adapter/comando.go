@@ -94,17 +94,21 @@ func ParseComando(htmlBytes []byte) ([]model.Result, error) {
 
 	var out []model.Result
 
-	// First pass: scoped to <article> blocks.
-	doc.Find("article h2.entry-title a").Each(func(_ int, s *goquery.Selection) {
-		title := strings.TrimSpace(s.Text())
-		href, _ := s.Attr("href")
+	// First pass: walk each <article> so we can extract the poster (first
+	// <img>) along with the title/link in a single scope.
+	doc.Find("article").Each(func(_ int, art *goquery.Selection) {
+		anchor := art.Find("h2.entry-title a").First()
+		title := strings.TrimSpace(anchor.Text())
+		href, _ := anchor.Attr("href")
 		if title == "" || href == "" {
 			return
 		}
+		poster, _ := art.Find("img").First().Attr("src")
 		out = append(out, model.Result{
 			Title:     title,
 			Source:    comandoName,
 			Quality:   model.ParseQuality(title),
+			PosterURL: strings.TrimSpace(poster),
 			DetailURL: href,
 		})
 	})

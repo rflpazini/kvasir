@@ -263,6 +263,29 @@
         card.querySelector(".card__title").textContent = result.title || "(sem título)";
         card.querySelector(".card__source").textContent = result.source || "—";
 
+        // poster — when present, swap from the rune fallback to the lazy <img>.
+        // onerror keeps the image hidden so a broken link keeps the runic glyph.
+        const posterEl = card.querySelector(".card__poster");
+        const posterImg = card.querySelector(".card__poster-img");
+        if (result.poster_url) {
+            posterImg.alt = result.title || "";
+            const onLoad = () => { posterEl.dataset.state = "loaded"; };
+            const onError = () => { posterEl.dataset.state = "empty"; };
+            posterImg.addEventListener("load", onLoad);
+            posterImg.addEventListener("error", onError);
+            posterImg.src = result.poster_url;
+            // Browsers can complete cached loads before the listeners fire
+            // (especially with lazy-loaded images that the IntersectionObserver
+            // resolves synchronously). Re-check after assignment.
+            if (posterImg.complete) {
+                if (posterImg.naturalWidth > 0) onLoad();
+                else onError();
+            }
+        } else {
+            // No poster URL: stay in the rune fallback.
+            posterEl.dataset.state = "empty";
+        }
+
         // quality badge — hidden when bucket is "Other" (noise) or missing.
         const qualityEl = card.querySelector(".card__quality");
         if (result.quality && result.quality !== "Other") {

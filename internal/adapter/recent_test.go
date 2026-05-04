@@ -51,6 +51,27 @@ func TestParseBoitorrentHome(t *testing.T) {
 	}
 }
 
+func TestParseBoitorrentHome_PostersExtracted(t *testing.T) {
+	html := loadFixture(t, "boitorrent", "home.html")
+	results, err := adapter.ParseBoitorrentHome(html)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	withPoster := 0
+	for _, r := range results {
+		if r.PosterURL == "" {
+			continue
+		}
+		withPoster++
+		if !strings.HasPrefix(r.PosterURL, "https://boitorrent.com/") {
+			t.Errorf("poster %q does not look like an absolute boitorrent URL", r.PosterURL)
+		}
+	}
+	if withPoster == 0 {
+		t.Errorf("expected most home items to carry a poster, got 0/%d", len(results))
+	}
+}
+
 func TestParseBoitorrentHome_Empty(t *testing.T) {
 	results, err := adapter.ParseBoitorrentHome([]byte("<html><body></body></html>"))
 	if err != nil {
@@ -120,6 +141,26 @@ func TestParseTorrentDosFilmesFeed_PubDateFormats(t *testing.T) {
 				t.Fatalf("PublishedAt nil for layout %s; got %+v", tc.name, r)
 			}
 		})
+	}
+}
+
+func TestParseTorrentDosFilmesFeed_PostersExtracted(t *testing.T) {
+	xml := loadFixture(t, "torrentdosfilmes", "feed.xml")
+	results, err := adapter.ParseTorrentDosFilmesFeed(xml)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	withPoster := 0
+	for _, r := range results {
+		if r.PosterURL != "" {
+			withPoster++
+		}
+	}
+	// WordPress feeds with featured images carry <media:content url="..."/>
+	// in every item. Tolerate a few without (themes that disable media)
+	// but require the majority.
+	if withPoster < len(results)/2 {
+		t.Errorf("expected at least half of feed items to have PosterURL, got %d/%d", withPoster, len(results))
 	}
 }
 

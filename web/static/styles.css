@@ -438,9 +438,9 @@ a { color: inherit; text-decoration: none; }
 /* ----- results region --------------------------------------------------- */
 
 .results {
-    display: flex;
-    flex-direction: column;
-    gap: 0.85rem;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 1.1rem;
     min-height: 240px;
 }
 
@@ -450,14 +450,65 @@ a { color: inherit; text-decoration: none; }
 
 .card {
     position: relative;
-    padding: 1.25rem 1.4rem 1rem;
+    display: flex;
+    flex-direction: column;
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius-card);
+    overflow: hidden;
     transition: border-color 200ms var(--ease-out),
                 background 200ms var(--ease-out),
                 transform 200ms var(--ease-out);
     animation: card-in 320ms var(--ease-out) both;
+}
+
+.card__poster {
+    position: relative;
+    aspect-ratio: 2 / 3;
+    background: var(--ember-soft);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border-bottom: 1px solid var(--rule);
+}
+
+.card__poster-fallback {
+    width: 28px;
+    height: 42px;
+    color: var(--ember);
+    opacity: 0.55;
+    stroke: currentColor;
+    stroke-width: 2;
+    fill: none;
+}
+
+.card__poster-img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 400ms var(--ease-out);
+}
+
+.card:hover .card__poster-img {
+    transform: scale(1.03);
+}
+
+.card__poster[data-state="loaded"] .card__poster-fallback {
+    display: none;
+}
+
+.card__poster[data-state="empty"] .card__poster-img {
+    visibility: hidden;
+}
+
+.card__body {
+    padding: 1rem 1.1rem 0.95rem;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
 }
 
 @keyframes card-in {
@@ -474,18 +525,24 @@ a { color: inherit; text-decoration: none; }
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 1rem;
+    gap: 0.6rem;
     margin-bottom: 0.5rem;
+    flex-wrap: wrap;
 }
 
 .card__title {
+    flex: 1 1 100%;
     margin: 0;
     font-family: var(--font-display);
     font-weight: 500;
-    font-size: 1.1rem;
-    line-height: 1.35;
+    font-size: 0.95rem;
+    line-height: 1.3;
     color: var(--ink-display);
     letter-spacing: 0.01em;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
 }
 
 .card:hover .card__title {
@@ -571,6 +628,7 @@ a { color: inherit; text-decoration: none; }
     gap: 0.5rem;
     align-items: center;
     padding-top: 0.6rem;
+    margin-top: auto;
     border-top: 1px dashed var(--rule-soft);
 }
 
