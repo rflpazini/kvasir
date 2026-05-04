@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -61,55 +60,19 @@ func (b *Boitorrent) Search(ctx context.Context, query string) ([]model.Result, 
 	params.Set("categoria", "lista")
 	u.RawQuery = params.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	body, err := fetchHTML(ctx, b.client, u.String(), boitorrentUA, boitorrentName)
 	if err != nil {
-		return nil, fmt.Errorf("boitorrent: build request: %w", err)
+		return nil, err
 	}
-	req.Header.Set("User-Agent", boitorrentUA)
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9")
-	req.Header.Set("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
-
-	resp, err := b.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("boitorrent: http error: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("boitorrent: unexpected status %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("boitorrent: read body: %w", err)
-	}
-
 	return ParseBoitorrent(body)
 }
 
 // Recent implements Adapter — fetches the homepage and parses the
 // "ÚLTIMOS LANÇAMENTOS" listing into normalized Results.
 func (b *Boitorrent) Recent(ctx context.Context) ([]model.Result, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, boitorrentBaseURL+"/", nil)
+	body, err := fetchHTML(ctx, b.client, boitorrentBaseURL+"/", boitorrentUA, boitorrentName)
 	if err != nil {
-		return nil, fmt.Errorf("boitorrent: build request: %w", err)
-	}
-	req.Header.Set("User-Agent", boitorrentUA)
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9")
-	req.Header.Set("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
-
-	resp, err := b.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("boitorrent: http error: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("boitorrent: unexpected status %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("boitorrent: read body: %w", err)
+		return nil, err
 	}
 	return ParseBoitorrentHome(body)
 }

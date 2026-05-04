@@ -56,27 +56,9 @@ func (t *TorrentDosFilmes) Search(ctx context.Context, query string) ([]model.Re
 	params.Set("s", q)
 	u.RawQuery = params.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	body, err := fetchHTML(ctx, t.client, u.String(), tdfUA, tdfName)
 	if err != nil {
-		return nil, fmt.Errorf("torrentdosfilmes: build request: %w", err)
-	}
-	req.Header.Set("User-Agent", tdfUA)
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9")
-	req.Header.Set("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
-
-	resp, err := t.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("torrentdosfilmes: http error: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("torrentdosfilmes: unexpected status %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("torrentdosfilmes: read body: %w", err)
+		return nil, err
 	}
 	return ParseTorrentDosFilmes(body)
 }
