@@ -102,9 +102,24 @@ func TestBoitorrent_ExtractMagnet_NoneInBody(t *testing.T) {
 }
 
 func TestBoitorrent_Magnet_RejectsCrossOriginDetailURL(t *testing.T) {
+	cases := []string{
+		"https://evil.example.com/file",
+		// Userinfo bypass: a naive HasPrefix would pass this since the
+		// raw string starts with "https://boitorrent.com" — the parsed
+		// host is actually evil.com.
+		"https://boitorrent.com:80@evil.com/x",
+		// Sibling domain.
+		"https://boitorrent.com.evil.com/x",
+		// Wrong scheme.
+		"http://boitorrent.com/x",
+		// Garbage URL.
+		"::not-a-url",
+	}
 	a := adapter.NewBoitorrent(nil)
-	if _, err := a.Magnet(context.Background(), "https://evil.example.com/file"); err == nil {
-		t.Error("expected refusal for non-boitorrent URL")
+	for _, raw := range cases {
+		if _, err := a.Magnet(context.Background(), raw); err == nil {
+			t.Errorf("expected refusal for %q", raw)
+		}
 	}
 }
 

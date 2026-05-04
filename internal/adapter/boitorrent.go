@@ -83,11 +83,13 @@ func (b *Boitorrent) Recent(ctx context.Context) ([]model.Result, error) {
 // title for different qualities/audio); we surface the first since the
 // upstream order is curated by the site.
 //
-// The detailURL must point at boitorrent.com — this is enforced as a
-// defense against SSRF where a crafted Result.DetailURL could otherwise
-// trick the server into proxying internal services.
+// The detailURL must parse to https://boitorrent.com (no userinfo, no
+// alternate host) — defense against SSRF where a crafted DetailURL like
+// `https://boitorrent.com:80@evil.com/x` would otherwise pass a naive
+// HasPrefix check and trick the server into fetching internal services.
 func (b *Boitorrent) Magnet(ctx context.Context, detailURL string) (string, error) {
-	if !strings.HasPrefix(detailURL, boitorrentBaseURL+"/") {
+	u, err := url.Parse(detailURL)
+	if err != nil || u.Scheme != "https" || u.Host != "boitorrent.com" || u.User != nil {
 		return "", fmt.Errorf("boitorrent: refusing detail URL outside %s: %s", boitorrentBaseURL, detailURL)
 	}
 	body, err := fetchHTML(ctx, b.client, detailURL, boitorrentUA, boitorrentName)

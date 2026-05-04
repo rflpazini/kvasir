@@ -1,11 +1,20 @@
 package adapter_test
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/rflpazini/kvasir/internal/adapter"
 )
+
+func TestTorrentDosFilmes_MagnetUnsupported(t *testing.T) {
+	a := adapter.NewTorrentDosFilmes(nil)
+	if _, err := a.Magnet(context.Background(), "https://torrentdosfilmes.se/x"); !errors.Is(err, adapter.ErrMagnetUnsupported) {
+		t.Errorf("err = %v, want ErrMagnetUnsupported", err)
+	}
+}
 
 func TestTorrentDosFilmes_ParseSearch_Interstellar(t *testing.T) {
 	html := loadFixture(t, "torrentdosfilmes", "search_interstellar.html")

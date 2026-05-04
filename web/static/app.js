@@ -175,6 +175,10 @@ async function copyMagnet(btn) {
 
     try {
         const magnet = await fetchMagnet(source, detail);
+        // Card may have been re-rendered (search/tab/filter) while we
+        // awaited; the new card has its own button. Bail before mutating
+        // a detached node.
+        if (!btn.isConnected) return;
         if (!magnet) {
             // Source does not expose magnets (ErrMagnetUnsupported on the
             // backend). Hide the button entirely so the user does not click
@@ -186,14 +190,17 @@ async function copyMagnet(btn) {
         btn.dataset.state = "copied";
         label.textContent = "Copiado";
         setTimeout(() => {
+            if (!btn.isConnected) return;
             btn.removeAttribute("data-state");
             label.textContent = original;
             btn.disabled = false;
         }, 1400);
     } catch (err) {
         console.error("kvasir: magnet copy failed", err);
+        if (!btn.isConnected) return;
         label.textContent = "Falhou";
         setTimeout(() => {
+            if (!btn.isConnected) return;
             label.textContent = original;
             btn.disabled = false;
         }, 1600);

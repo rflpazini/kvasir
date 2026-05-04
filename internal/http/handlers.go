@@ -208,10 +208,13 @@ func (h *handlers) magnet(c echo.Context) error {
 	ctx := c.Request().Context()
 
 	if h.deps.Cache != nil {
-		if cached, hit := h.lookupCache(ctx, cacheKey); hit && cached.Query != "" {
+		lookupCtx, cancel := context.WithTimeout(ctx, cacheLookupBudget)
+		if uri, hit := h.deps.Cache.GetString(lookupCtx, cacheKey); hit {
+			cancel()
 			h.deps.Metrics.CacheHits.Inc()
-			return c.JSON(http.StatusOK, echo.Map{"magnet": cached.Query, "cached": true})
+			return c.JSON(http.StatusOK, echo.Map{"magnet": uri, "cached": true})
 		}
+		cancel()
 		h.deps.Metrics.CacheMisses.Inc()
 	}
 
@@ -240,13 +243,9 @@ func magnetCacheKey(source, detail string) string {
 }
 
 func (h *handlers) storeMagnetCache(ctx context.Context, key, uri string) {
-	payload, err := json.Marshal(model.SearchResponse{Query: uri})
-	if err != nil {
-		return
-	}
 	storeCtx, cancel := context.WithTimeout(ctx, cacheLookupBudget)
 	defer cancel()
-	if err := h.deps.Cache.SetSearch(storeCtx, key, payload, 5*time.Minute); err != nil {
+	if err := h.deps.Cache.SetString(storeCtx, key, uri, 5*time.Minute); err != nil {
 		h.deps.Logger.Warn("magnet cache store failed", "err", err.Error())
 	}
 }
