@@ -1,6 +1,7 @@
 package adapter_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,6 +76,35 @@ func TestBoitorrent_ParseSearch_SingleResult(t *testing.T) {
 	// Fixture title lists both 4K and 1080P; 4K wins per precedence rule.
 	if r.Quality != model.Quality4K {
 		t.Errorf("Quality = %q, want %q (title carries 4K marker)", r.Quality, model.Quality4K)
+	}
+}
+
+func TestBoitorrent_ExtractMagnet_FromDetailFixture(t *testing.T) {
+	html := loadFixture(t, "boitorrent", "detail_interestelar.html")
+
+	uri, err := adapter.ExtractBoitorrentMagnet(html)
+	if err != nil {
+		t.Fatalf("ExtractBoitorrentMagnet: %v", err)
+	}
+	if !strings.HasPrefix(uri, "magnet:?xt=urn:btih:") {
+		t.Errorf("magnet shape wrong: %q", uri)
+	}
+}
+
+func TestBoitorrent_ExtractMagnet_NoneInBody(t *testing.T) {
+	_, err := adapter.ExtractBoitorrentMagnet([]byte("<html>nothing here</html>"))
+	if err == nil {
+		t.Fatal("expected ErrMagnetUnsupported when body has no magnet")
+	}
+	if err != adapter.ErrMagnetUnsupported {
+		t.Errorf("err = %v, want ErrMagnetUnsupported", err)
+	}
+}
+
+func TestBoitorrent_Magnet_RejectsCrossOriginDetailURL(t *testing.T) {
+	a := adapter.NewBoitorrent(nil)
+	if _, err := a.Magnet(context.Background(), "https://evil.example.com/file"); err == nil {
+		t.Error("expected refusal for non-boitorrent URL")
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -75,6 +76,42 @@ func (b *Boitorrent) Recent(ctx context.Context) ([]model.Result, error) {
 		return nil, err
 	}
 	return ParseBoitorrentHome(body)
+}
+
+// Magnet fetches the detail page and returns the first magnet URI it
+// finds. Boitorrent inlines magnets in the page HTML (typically 1-3 per
+// title for different qualities/audio); we surface the first since the
+// upstream order is curated by the site.
+//
+// The detailURL must point at boitorrent.com — this is enforced as a
+// defense against SSRF where a crafted Result.DetailURL could otherwise
+// trick the server into proxying internal services.
+func (b *Boitorrent) Magnet(ctx context.Context, detailURL string) (string, error) {
+	if !strings.HasPrefix(detailURL, boitorrentBaseURL+"/") {
+		return "", fmt.Errorf("boitorrent: refusing detail URL outside %s: %s", boitorrentBaseURL, detailURL)
+	}
+	body, err := fetchHTML(ctx, b.client, detailURL, boitorrentUA, boitorrentName)
+	if err != nil {
+		return "", err
+	}
+	return ExtractBoitorrentMagnet(body)
+}
+
+// magnetRe matches the canonical magnet URI shape. The trackers in the
+// query string can contain a wide range of characters; we lean on a
+// non-greedy match terminated by a quote, space, or angle bracket so
+// we capture exactly one full magnet without bleeding into surrounding
+// HTML attributes.
+var magnetRe = regexp.MustCompile(`magnet:\?xt=urn:btih:[A-Fa-f0-9]+(?:&[^"'<\s]*)?`)
+
+// ExtractBoitorrentMagnet returns the first magnet URI found in the
+// HTML body, or ErrMagnetUnsupported when none is present.
+func ExtractBoitorrentMagnet(htmlBytes []byte) (string, error) {
+	match := magnetRe.Find(htmlBytes)
+	if match == nil {
+		return "", ErrMagnetUnsupported
+	}
+	return string(match), nil
 }
 
 // HealthCheck implements Adapter. Cheap HEAD probe on the homepage.

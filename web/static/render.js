@@ -105,11 +105,14 @@ export function buildCard(result, idx, tpl, onCopyMagnet) {
         openBtn.style.opacity = "0.4";
     }
 
-    // magnet copy
+    // magnet copy — enabled when the result has a detail URL we can hand
+    // to /api/magnet. The actual fetch happens lazily on click; sources
+    // that return 404 (ErrMagnetUnsupported) hide the button on first try.
     const magnetBtn = card.querySelector('[data-action="copy-magnet"]');
-    if (result.magnet) {
+    if (result.detail_url) {
         magnetBtn.disabled = false;
-        magnetBtn.dataset.magnet = result.magnet;
+        magnetBtn.dataset.source = result.source;
+        magnetBtn.dataset.detail = result.detail_url;
         magnetBtn.addEventListener("click", () => onCopyMagnet(magnetBtn));
     }
 

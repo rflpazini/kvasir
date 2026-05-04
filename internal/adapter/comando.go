@@ -71,6 +71,15 @@ func (c *Comando) Recent(ctx context.Context) ([]model.Result, error) {
 	return ParseComando(html)
 }
 
+// Magnet is unsupported on comando.la for now — the FlareSolverr round
+// trip per click is expensive and the rendered detail page typically
+// hides magnets behind a JS-driven modal. Returning ErrMagnetUnsupported
+// keeps the UI consistent: the copy button stays disabled for results
+// from this source instead of showing a fake call-to-action.
+func (c *Comando) Magnet(_ context.Context, _ string) (string, error) {
+	return "", ErrMagnetUnsupported
+}
+
 // HealthCheck implements Adapter. Cheap probe through FlareSolverr to verify
 // CF challenge is solvable end-to-end.
 func (c *Comando) HealthCheck(ctx context.Context) error {

@@ -3,7 +3,7 @@
 // api.js (URL building / fetch) and render.js (DOM helpers / templates);
 // this module owns the mutable session state and dispatches between them.
 
-import { fetchJSON, loadAdapters, recentURL, searchURL } from "/api.js";
+import { fetchJSON, fetchMagnet, loadAdapters, recentURL, searchURL } from "/api.js";
 import {
     renderError,
     renderResults,
@@ -164,20 +164,39 @@ async function bootstrapSourceChips() {
 // ---- magnet copy -----------------------------------------------------------
 
 async function copyMagnet(btn) {
-    const magnet = btn.dataset.magnet;
-    if (!magnet) return;
+    const source = btn.dataset.source;
+    const detail = btn.dataset.detail;
+    if (!source || !detail) return;
+
+    const label = btn.querySelector("[data-copy-label]");
+    const original = label.textContent;
+    btn.disabled = true;
+    label.textContent = "Buscando…";
+
     try {
+        const magnet = await fetchMagnet(source, detail);
+        if (!magnet) {
+            // Source does not expose magnets (ErrMagnetUnsupported on the
+            // backend). Hide the button entirely so the user does not click
+            // again expecting a different result.
+            btn.style.display = "none";
+            return;
+        }
         await navigator.clipboard.writeText(magnet);
         btn.dataset.state = "copied";
-        const label = btn.querySelector("[data-copy-label]");
-        const original = label.textContent;
         label.textContent = "Copiado";
         setTimeout(() => {
             btn.removeAttribute("data-state");
             label.textContent = original;
+            btn.disabled = false;
         }, 1400);
     } catch (err) {
-        console.error("kvasir: clipboard write failed", err);
+        console.error("kvasir: magnet copy failed", err);
+        label.textContent = "Falhou";
+        setTimeout(() => {
+            label.textContent = original;
+            btn.disabled = false;
+        }, 1600);
     }
 }
 

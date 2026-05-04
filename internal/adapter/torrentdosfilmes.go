@@ -91,6 +91,14 @@ func (t *TorrentDosFilmes) Recent(ctx context.Context) ([]model.Result, error) {
 	return ParseTorrentDosFilmesFeed(body)
 }
 
+// Magnet is unsupported on torrentdosfilmes — the detail page redirects
+// the user through an external download host instead of inlining a
+// magnet URI in the HTML. Surfacing ErrMagnetUnsupported keeps the
+// frontend honest about the per-source capability.
+func (t *TorrentDosFilmes) Magnet(_ context.Context, _ string) (string, error) {
+	return "", ErrMagnetUnsupported
+}
+
 // HealthCheck implements Adapter.
 func (t *TorrentDosFilmes) HealthCheck(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, tdfBaseURL+"/", nil)

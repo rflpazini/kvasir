@@ -27,10 +27,12 @@ import (
 
 // fakeAdapter is reused for HTTP-layer tests.
 type fakeAdapter struct {
-	name    string
-	results []model.Result
-	err     error
-	calls   atomic.Int32
+	name      string
+	results   []model.Result
+	err       error
+	magnetURI string // empty → ErrMagnetUnsupported
+	magnetErr error  // when set, returned instead of magnetURI
+	calls     atomic.Int32
 }
 
 func (f *fakeAdapter) Name() string { return f.name }
@@ -43,6 +45,16 @@ func (f *fakeAdapter) Search(_ context.Context, _ string) ([]model.Result, error
 func (f *fakeAdapter) Recent(_ context.Context) ([]model.Result, error) {
 	f.calls.Add(1)
 	return f.results, f.err
+}
+
+func (f *fakeAdapter) Magnet(_ context.Context, _ string) (string, error) {
+	if f.magnetErr != nil {
+		return "", f.magnetErr
+	}
+	if f.magnetURI == "" {
+		return "", adapter.ErrMagnetUnsupported
+	}
+	return f.magnetURI, nil
 }
 
 func (f *fakeAdapter) HealthCheck(_ context.Context) error { return f.err }
@@ -423,6 +435,68 @@ func TestHandler_SearchQualityFilterDedupes(t *testing.T) {
 	if len(got) != 2 {
 		t.Errorf("expected 2 results (4K + 1080p, deduped), got %d", len(got))
 	}
+}
+
+func TestHandler_Magnet(t *testing.T) {
+	t.Run("happy path returns magnet", func(t *testing.T) {
+		h := newHarness(t, false, nil, nil)
+		h.a.magnetURI = "magnet:?xt=urn:btih:DEADBEEF"
+
+		_, body := h.do(t, stdhttp.MethodGet, "/api/magnet?source=fake&detail=https://x/a")
+		if body["magnet"] != "magnet:?xt=urn:btih:DEADBEEF" {
+			t.Errorf("magnet = %v", body["magnet"])
+		}
+		if body["cached"] != false {
+			t.Errorf("first call cached = %v, want false", body["cached"])
+		}
+	})
+
+	t.Run("missing params returns 400", func(t *testing.T) {
+		h := newHarness(t, false, nil, nil)
+		rec, _ := h.do(t, stdhttp.MethodGet, "/api/magnet?source=fake")
+		if rec.Code != stdhttp.StatusBadRequest {
+			t.Errorf("status = %d, want 400", rec.Code)
+		}
+	})
+
+	t.Run("unknown source returns 404", func(t *testing.T) {
+		h := newHarness(t, false, nil, nil)
+		rec, _ := h.do(t, stdhttp.MethodGet, "/api/magnet?source=ghost&detail=https://x/a")
+		if rec.Code != stdhttp.StatusNotFound {
+			t.Errorf("status = %d, want 404", rec.Code)
+		}
+	})
+
+	t.Run("ErrMagnetUnsupported returns 404", func(t *testing.T) {
+		h := newHarness(t, false, nil, nil)
+		// magnetURI empty + magnetErr nil → fakeAdapter returns ErrMagnetUnsupported
+		rec, _ := h.do(t, stdhttp.MethodGet, "/api/magnet?source=fake&detail=https://x/a")
+		if rec.Code != stdhttp.StatusNotFound {
+			t.Errorf("status = %d, want 404 for unsupported", rec.Code)
+		}
+	})
+
+	t.Run("adapter error returns 502", func(t *testing.T) {
+		h := newHarness(t, false, nil, nil)
+		h.a.magnetErr = errors.New("upstream timeout")
+		rec, _ := h.do(t, stdhttp.MethodGet, "/api/magnet?source=fake&detail=https://x/a")
+		if rec.Code != stdhttp.StatusBadGateway {
+			t.Errorf("status = %d, want 502", rec.Code)
+		}
+	})
+
+	t.Run("second call hits cache", func(t *testing.T) {
+		h := newHarness(t, false, nil, nil)
+		h.a.magnetURI = "magnet:?xt=urn:btih:CAFEFADA"
+
+		if rec, _ := h.do(t, stdhttp.MethodGet, "/api/magnet?source=fake&detail=https://x/cached"); rec.Code != 200 {
+			t.Fatalf("first: %d", rec.Code)
+		}
+		_, body := h.do(t, stdhttp.MethodGet, "/api/magnet?source=fake&detail=https://x/cached")
+		if body["cached"] != true {
+			t.Error("second call must hit cache")
+		}
+	})
 }
 
 func TestHandler_HealthzReportsAdapters(t *testing.T) {

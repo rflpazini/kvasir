@@ -55,3 +55,20 @@ export async function loadAdapters() {
         return [];
     }
 }
+
+/**
+ * Resolve the magnet URI for a single result lazily — only the user
+ * who clicks "Copiar magnet" pays the cost of the upstream detail-page
+ * fetch. Returns the URI on success, null on 404 (source does not
+ * expose magnets — UI hides the button), throws on transport / 5xx.
+ */
+export async function fetchMagnet(source, detailURL) {
+    const params = new URLSearchParams({ source, detail: detailURL });
+    const resp = await fetch(`/api/magnet?${params.toString()}`, {
+        headers: { Accept: "application/json" },
+    });
+    if (resp.status === 404) return null;
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const body = await resp.json();
+    return body.magnet || null;
+}
