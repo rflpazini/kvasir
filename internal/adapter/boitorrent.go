@@ -131,6 +131,7 @@ func ParseBoitorrent(htmlBytes []byte) ([]model.Result, error) {
 		out = append(out, model.Result{
 			Title:     title,
 			Source:    boitorrentName,
+			Quality:   model.ParseQuality(title),
 			DetailURL: href,
 		})
 	})

@@ -44,6 +44,14 @@ func (h *handlers) search(c echo.Context) error {
 	}
 
 	limit := parseLimit(c.QueryParam("limit"))
+	qualities, droppedUnknown, droppedEmpty := parseQualityFilter(c.QueryParam("quality"))
+	if droppedUnknown > 0 {
+		h.deps.Logger.Warn("quality filter dropped unknown tokens", "raw", c.QueryParam("quality"), "count", droppedUnknown)
+		h.deps.Metrics.QualityFilterDropped.WithLabelValues("unknown").Add(float64(droppedUnknown))
+	}
+	if droppedEmpty > 0 {
+		h.deps.Metrics.QualityFilterDropped.WithLabelValues("empty").Add(float64(droppedEmpty))
+	}
 
 	ctx := c.Request().Context()
 	key := cacheKey(q)
@@ -52,7 +60,7 @@ func (h *handlers) search(c echo.Context) error {
 		if cached, ok := h.lookupCache(ctx, key); ok {
 			h.deps.Metrics.CacheHits.Inc()
 			cached.Cached = true
-			cached.Results = applyLimit(cached.Results, limit)
+			cached.Results = applyLimit(model.FilterByQuality(cached.Results, qualities), limit)
 			return c.JSON(http.StatusOK, cached)
 		}
 	}
@@ -65,14 +73,21 @@ func (h *handlers) search(c echo.Context) error {
 	h.deps.Metrics.RequestDuration.Observe(time.Since(timer).Seconds())
 	resp.Query = q
 
+	// Cache the FULL set (pre-filter), so subsequent calls with different
+	// filters all hit the cache. Filtering is a per-request concern.
 	if h.deps.Cache != nil {
 		h.storeCache(ctx, key, resp)
 	}
 
-	resp.Results = applyLimit(resp.Results, limit)
+	resp.Results = applyLimit(model.FilterByQuality(resp.Results, qualities), limit)
 	return c.JSON(http.StatusOK, resp)
 }
 
+// lookupCache returns a fresh SearchResponse on every hit because the payload
+// is JSON-decoded into a new struct per call. Callers may safely mutate the
+// returned Results slice (apply filter, truncate to limit) without affecting
+// other in-flight requests. If this layer is ever swapped for an in-memory
+// cache that returns shared backing arrays, callers must defensively copy.
 func (h *handlers) lookupCache(ctx context.Context, key string) (model.SearchResponse, bool) {
 	lookupCtx, cancel := context.WithTimeout(ctx, cacheLookupBudget)
 	defer cancel()
@@ -152,6 +167,44 @@ func parseLimit(raw string) int {
 		return maxLimit
 	}
 	return v
+}
+
+// parseQualityFilter parses a comma-separated quality list (e.g. "4k,1080p")
+// into the canonical Quality slice. Unknown tokens are silently dropped (kept
+// silent so adding a new bucket like Quality720p later does not 400 older
+// clients), but the counts surface to the caller for observable drift.
+//
+// Returns:
+//   - qualities: deduped slice in input order, nil if no recognized tokens
+//   - droppedUnknown: count of non-empty tokens that did not match any bucket
+//   - droppedEmpty: count of empty parts (",,4k" or trailing comma)
+func parseQualityFilter(raw string) (qualities []model.Quality, droppedUnknown, droppedEmpty int) {
+	if raw == "" {
+		return nil, 0, 0
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]model.Quality, 0, len(parts))
+	seen := make(map[model.Quality]struct{}, len(parts))
+	for _, p := range parts {
+		if strings.TrimSpace(p) == "" {
+			droppedEmpty++
+			continue
+		}
+		q, ok := model.QualityFromString(p)
+		if !ok {
+			droppedUnknown++
+			continue
+		}
+		if _, dup := seen[q]; dup {
+			continue
+		}
+		seen[q] = struct{}{}
+		out = append(out, q)
+	}
+	if len(out) == 0 {
+		return nil, droppedUnknown, droppedEmpty
+	}
+	return out, droppedUnknown, droppedEmpty
 }
 
 func applyLimit(results []model.Result, limit int) []model.Result {

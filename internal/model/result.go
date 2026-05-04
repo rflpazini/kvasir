@@ -12,6 +12,7 @@ type Result struct {
 	Leechers    int        `json:"leechers"`
 	Category    string     `json:"category,omitempty"`
 	Source      string     `json:"source"`
+	Quality     Quality    `json:"quality,omitempty"`
 	PublishedAt *time.Time `json:"published_at,omitempty"`
 	DetailURL   string     `json:"detail_url"`
 }

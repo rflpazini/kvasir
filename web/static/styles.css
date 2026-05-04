@@ -473,6 +473,32 @@ a { color: inherit; text-decoration: none; }
     white-space: nowrap;
 }
 
+.card__quality {
+    flex: 0 0 auto;
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    padding: 0.18rem 0.5rem;
+    border: 1px solid var(--rule);
+    border-radius: 999px;
+    white-space: nowrap;
+    color: var(--ember);
+    background: var(--ember-soft);
+}
+
+.card__quality[data-quality="4K"] {
+    color: #f0d68a;
+    border-color: #c69a3c;
+    background: rgba(212, 162, 76, 0.18);
+}
+
+.card__quality[data-quality="1080p"] {
+    color: #b8d3ff;
+    border-color: #5980c2;
+    background: rgba(89, 128, 194, 0.18);
+}
+
 .card__meta {
     display: flex;
     flex-wrap: wrap;

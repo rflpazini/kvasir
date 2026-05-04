@@ -15,6 +15,7 @@
     const statSources   = document.getElementById("stat-sources");
     const statsCache    = document.getElementById("stats-cache");
     const chipsHost     = document.getElementById("source-chips");
+    const qualityHost   = document.getElementById("quality-chips");
     const initialNotice = document.getElementById("initial-notice");
 
     const tplSkeleton = document.getElementById("tpl-skeleton");
@@ -26,6 +27,9 @@
 
     /** @type {Set<string>} sources currently included in the view. */
     let activeSources = new Set();
+
+    /** @type {Set<string>} quality buckets currently active (server-side filter). Empty = no filter. */
+    let activeQualities = new Set();
 
     /** @type {object|null} latest /api/search payload, kept for client-side filter re-renders. */
     let lastResponse = null;
@@ -101,6 +105,22 @@
         });
     }
 
+    function bindQualityChips() {
+        qualityHost.querySelectorAll(".chip[data-quality]").forEach((chip) => {
+            chip.addEventListener("click", () => {
+                const q = chip.dataset.quality;
+                if (activeQualities.has(q)) {
+                    activeQualities.delete(q);
+                    chip.setAttribute("aria-pressed", "false");
+                } else {
+                    activeQualities.add(q);
+                    chip.setAttribute("aria-pressed", "true");
+                }
+                if (lastQuery) runSearch(lastQuery);
+            });
+        });
+    }
+
     function toggleSource(name, chip) {
         const isActive = activeSources.has(name);
         if (isActive && activeSources.size === 1) {
@@ -126,7 +146,11 @@
         showSkeleton();
         results.setAttribute("aria-busy", "true");
 
-        const url = `/api/search?q=${encodeURIComponent(query)}&limit=50`;
+        const params = new URLSearchParams({ q: query, limit: "50" });
+        if (activeQualities.size > 0) {
+            params.set("quality", Array.from(activeQualities).join(","));
+        }
+        const url = `/api/search?${params.toString()}`;
 
         try {
             const resp = await fetch(url, {
@@ -181,6 +205,14 @@
 
         card.querySelector(".card__title").textContent = result.title || "(sem título)";
         card.querySelector(".card__source").textContent = result.source || "—";
+
+        // quality badge — hidden when bucket is "Other" (noise) or missing.
+        const qualityEl = card.querySelector(".card__quality");
+        if (result.quality && result.quality !== "Other") {
+            qualityEl.textContent = result.quality;
+            qualityEl.dataset.quality = result.quality;
+            qualityEl.hidden = false;
+        }
 
         // metadata pills
         const meta = card.querySelector(".card__meta");
@@ -303,5 +335,6 @@
     });
 
     bindShortcuts();
+    bindQualityChips();
     loadSources();
 })();
