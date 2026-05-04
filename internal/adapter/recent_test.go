@@ -73,7 +73,6 @@ func TestParseTorrentDosFilmesFeed(t *testing.T) {
 		t.Fatalf("expected at least 3 RSS items, got %d", got)
 	}
 
-	withDate := 0
 	for i, r := range results {
 		if r.Source != "torrentdosfilmes" {
 			t.Errorf("results[%d].Source = %q", i, r.Source)
@@ -87,15 +86,40 @@ func TestParseTorrentDosFilmesFeed(t *testing.T) {
 		if r.Quality == "" {
 			t.Errorf("results[%d].Quality unset", i)
 		}
-		if r.PublishedAt != nil {
-			withDate++
-		}
 	}
+	// Note: pubDate format coverage lives in the synthetic
+	// TestParseTorrentDosFilmesFeed_PubDateFormats below so this fixture
+	// test does not depend on whatever format the live site happens to
+	// emit on the day the fixture is regenerated.
+}
 
-	// Most WordPress feeds emit RFC1123Z pubDate; we expect the majority to
-	// parse successfully even if a malformed entry slips through.
-	if withDate < len(results)/2 {
-		t.Errorf("only %d/%d results have PublishedAt; pubDate parsing is broken", withDate, len(results))
+// TestParseTorrentDosFilmesFeed_PubDateFormats locks the parser's accepted
+// date layouts to known constants. If WordPress ever ships ISO 8601, the
+// breakage shows up here, not in a coupled fixture assertion.
+func TestParseTorrentDosFilmesFeed_PubDateFormats(t *testing.T) {
+	cases := []struct {
+		name string
+		date string
+	}{
+		{"RFC1123Z", "Mon, 04 May 2026 14:32:05 +0000"},
+		{"RFC1123", "Mon, 04 May 2026 14:32:05 GMT"},
+		{"RFC822Z", "04 May 26 14:32 +0000"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			xml := []byte(`<?xml version="1.0"?><rss version="2.0"><channel><item>
+				<title>Item 1080p</title>
+				<link>https://x/a</link>
+				<pubDate>` + tc.date + `</pubDate>
+			</item></channel></rss>`)
+			r, err := adapter.ParseTorrentDosFilmesFeed(xml)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if len(r) != 1 || r[0].PublishedAt == nil {
+				t.Fatalf("PublishedAt nil for layout %s; got %+v", tc.name, r)
+			}
+		})
 	}
 }
 

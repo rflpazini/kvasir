@@ -365,6 +365,22 @@ func TestHandler_RecentReturnsAggregate(t *testing.T) {
 			t.Errorf("adapter called %d times, want 1", got)
 		}
 	})
+
+	t.Run("cache write failure does not break the response", func(t *testing.T) {
+		// Close the miniredis backing store after harness construction so
+		// the very next SetSearch fails. The handler must still return 200
+		// with the freshly aggregated payload.
+		h := newHarness(t, false, results, nil)
+		h.mr.Close()
+
+		rec, body := h.do(t, stdhttp.MethodGet, "/api/recent")
+		if rec.Code != stdhttp.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		if got := len(body["results"].([]any)); got != 2 {
+			t.Errorf("expected 2 results despite cache failure, got %d", got)
+		}
+	})
 }
 
 func TestHandler_HealthzReportsAdapters(t *testing.T) {

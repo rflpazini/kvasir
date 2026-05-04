@@ -147,6 +147,9 @@
 
     function activate(target) {
         if (target === mode) return;
+        // Cancel any in-flight fetch so a slow search response cannot
+        // race-render after we have already switched to Lançamentos.
+        if (inflight) inflight.abort();
         mode = target;
         const isRecent = target === "recent";
         tabSearch.setAttribute("aria-selected", String(!isRecent));

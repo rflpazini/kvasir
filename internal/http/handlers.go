@@ -91,13 +91,6 @@ func (h *handlers) search(c echo.Context) error {
 func (h *handlers) recent(c echo.Context) error {
 	limit := parseLimit(c.QueryParam("limit"))
 	qualities, droppedUnknown, droppedEmpty := parseQualityFilter(c.QueryParam("quality"))
-	if droppedUnknown > 0 {
-		h.deps.Logger.Warn("quality filter dropped unknown tokens", "raw", c.QueryParam("quality"), "count", droppedUnknown)
-		h.deps.Metrics.QualityFilterDropped.WithLabelValues("unknown").Add(float64(droppedUnknown))
-	}
-	if droppedEmpty > 0 {
-		h.deps.Metrics.QualityFilterDropped.WithLabelValues("empty").Add(float64(droppedEmpty))
-	}
 
 	ctx := c.Request().Context()
 
@@ -109,6 +102,17 @@ func (h *handlers) recent(c echo.Context) error {
 			return c.JSON(http.StatusOK, cached)
 		}
 		h.deps.Metrics.CacheMisses.Inc()
+	}
+
+	// Log + bump the dropped-token counter only on miss so the homepage
+	// refresh button (same querystring hammered repeatedly) does not spam
+	// the warn channel on every cache hit.
+	if droppedUnknown > 0 {
+		h.deps.Logger.Warn("quality filter dropped unknown tokens", "raw", c.QueryParam("quality"), "count", droppedUnknown)
+		h.deps.Metrics.QualityFilterDropped.WithLabelValues("unknown").Add(float64(droppedUnknown))
+	}
+	if droppedEmpty > 0 {
+		h.deps.Metrics.QualityFilterDropped.WithLabelValues("empty").Add(float64(droppedEmpty))
 	}
 
 	timer := time.Now()
